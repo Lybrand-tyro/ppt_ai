@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PPT AI - 智能PPT生成器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 {
+            text-align: center;
+            color: white;
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: bold;
+        }
+        input[type="text"], textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        input[type="text"]:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+            font-family: 'Consolas', monospace;
+        }
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            background: #48bb78;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #38a169;
+            transform: translateY(-2px);
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .checkbox-row input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-indicator.connected {
+            background: #48bb78;
+            box-shadow: 0 0 5px #48bb78;
+        }
+        .status-indicator.disconnected {
+            background: #f56565;
+            box-shadow: 0 0 5px #f56565;
+        }
+        .llm-config {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+        .llm-config h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading.show {
+            display: flex;
+        }
+        .loading p {
+            color: white;
+            font-size: 1.5em;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .outline-editor {
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .outline-item {
+            background: #f7fafc;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .outline-item h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+        .outline-item textarea {
+            width: 100%;
+            min-height: 80px;
+            margin-top: 8px;
+        }
+        .log-viewer {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: 'Consolas', monospace;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            font-size: 12px;
+        }
+        .preview-container {
+            margin-top: 20px;
+        }
+        .preview-iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+            border-radius: 10px;
+            background: white;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .step {
+            padding: 10px 20px;
+            background: #e0e0e0;
+            color: #666;
+            border-radius: 20px;
+            margin: 0 5px;
+            font-weight: bold;
+        }
+        .step.active {
+            background: #667eea;
+            color: white;
+        }
+        .step.completed {
+            background: #48bb78;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>PPT AI - 智能PPT生成器</h1>
+
+    <div class="container">
+        <div class="panel">
+            <h2>第一步：输入提示词或编写大纲</h2>
+
+            <div class="form-group">
+                <label for="topic">PPT主题/需求描述</label>
+                <textarea id="topic" placeholder="请输入PPT主题或详细需求，如：人工智能的发展历程和应用场景分析"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="language">语言</label>
+                <select id="language">
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="generateOutline()">生成大纲</button>
+                <button class="btn btn-secondary" onclick="useManualOutline()">使用手动大纲</button>
+                <button class="btn btn-secondary" onclick="clearForm()">清空</button>
+            </div>
+
+            <div class="llm-config">
+                <h3>LLM配置</h3>
+                <div class="form-group">
+                    <label for="apiEndpoint">API端点</label>
+                    <input type="text" id="apiEndpoint" placeholder="http://localhost:8080/v1/chat/completions">
+                </div>
+                <div class="form-group">
+                    <label for="apiKey">API密钥</label>
+                    <input type="text" id="apiKey" placeholder="（可选）">
+                </div>
+                <div class="form-group">
+                    <label for="modelName">模型名称</label>
+                    <input type="text" id="modelName" placeholder="gpt-3.5-turbo 或 qwen3.5:9b">
+                </div>
+                <div class="checkbox-row">
+                    <input type="checkbox" id="isLocal">
+                    <label for="isLocal">本地模型（如WSL2 llama.cpp）</label>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="configureLLM()">保存配置</button>
+                    <span id="llmStatus">
+                        <span class="status-indicator disconnected"></span>
+                        <span>LLM未配置</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>第二步：编辑大纲</h2>
+            <div id="outlineEditor" style="display: none;">
+                <div id="outlineContent"></div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="generateSlides()">生成PPT</button>
+                    <button class="btn btn-secondary" onclick="updateOutlineFromEditor()">更新大纲</button>
+                </div>
+            </div>
+
+            <div class="preview-container" id="previewContainer" style="display: none;">
+                <h2>第三步：预览PPT</h2>
+                <button class="btn btn-secondary" onclick="downloadHTML()">下载HTML</button>
+                <iframe id="pptPreview" class="preview-iframe"></iframe>
+            </div>
+        </div>
+
+        <div class="panel" style="grid-column: 1 / -1;">
+            <h2>日志</h2>
+            <button class="btn btn-secondary" onclick="refreshLogs()">刷新日志</button>
+            <div id="logViewer" class="log-viewer">日志将显示在这里...</div>
+        </div>
+    </div>
+
+    <div class="loading" id="loading">
+        <p>处理中，请稍候...</p>
+    </div>
+
+    <script>
+        let currentOutline = null;
+        let llmConfigured = false;
+
+        async function configureLLM() {
+            const apiEndpoint = document.getElementById('apiEndpoint').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const modelName = document.getElementById('modelName').value;
+            const isLocal = document.getElementById('isLocal').checked;
+
+            if (!apiEndpoint || !modelName) {
+                alert('请填写API端点和模型名称');
+                return;
+            }
+
+            showLoading('配置LLM中...');
+
+            try {
+                const response = await fetch('/api/configure-llm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_endpoint: apiEndpoint, api_key: apiKey, model_name: modelName, is_local: isLocal })
+                });
+
+                if (response.ok) {
+                    llmConfigured = true;
+                    document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                    alert('LLM配置成功！');
+                } else {
+                    alert('LLM配置失败');
+                }
+            } catch (error) {
+                alert('配置错误: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function generateOutline() {
+            const topic = document.getElementById('topic').value;
+            const language = document.getElementById('language').value;
+
+            if (!topic) {
+                alert('请输入PPT主题或需求');
+                return;
+            }
+
+            showLoading('生成大纲中...');
+
+            try {
+                const response = await fetch('/api/generate-outline', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic, language, use_llm: llmConfigured })
+                });
+
+                if (!response.ok) throw new Error('生成大纲失败');
+
+                currentOutline = await response.json();
+                displayOutline(currentOutline);
+                refreshLogs();
+            } catch (error) {
+                alert('错误: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function useManualOutline() {
+            const topic = document.getElementById('topic').value;
+            const language = document.getElementById('language').value;
+            if (!topic) {
+                alert('请输入PPT主题作为大纲标题');
+                return;
+            }
+
+            currentOutline = {
+                title: topic,
+                slides: [
+                    { id: 1, type: 'title', title: topic, subtitle: '', content: '' },
+                    { id: 2, type: 'agenda', title: '目录', subtitle: '', content: '请在下方编辑内容' },
+                    { id: 3, type: 'content', title: '引言', subtitle: '', content: '请输入引言内容' },
+                    { id: 4, type: 'content', title: '主要内容', subtitle: '', content: '请输入主要内容' },
+                    { id: 5, type: 'content', title: '案例分析', subtitle: '', content: '请输入案例分析' },
+                    { id: 6, type: 'thankyou', title: '谢谢', subtitle: '感谢您的聆听', content: '' }
+                ],
+                metadata: { language: language, total_slides: 6 }
+            };
+
+            displayOutline(currentOutline);
+        }
+
+        function displayOutline(outline) {
+            const editor = document.getElementById('outlineEditor');
+            const content = document.getElementById('outlineContent');
+
+            editor.style.display = 'block';
+            content.innerHTML = '<h3>' + outline.title + '</h3>';
+
+            outline.slides.forEach((slide, index) => {
+                const item = document.createElement('div');
+                item.className = 'outline-item';
+                item.innerHTML = `
+                    <h4>[${slide.id}] ${slide.title} (${slide.type})</h4>
+                    ${slide.subtitle ? `<p><strong>副标题：</strong><input type="text" id="subtitle_${index}" value="${slide.subtitle}"></p>` : ''}
+                    ${slide.type === 'content' ? `<textarea id="content_${index}" placeholder="输入内容">${slide.content || ''}</textarea>` : ''}
+                `;
+                content.appendChild(item);
+            });
+
+            document.getElementById('previewContainer').style.display = 'none';
+        }
+
+        function updateOutlineFromEditor() {
+            if (!currentOutline) return;
+
+            currentOutline.slides.forEach((slide, index) => {
+                const subtitleEl = document.getElementById(`subtitle_${index}`);
+                const contentEl = document.getElementById(`content_${index}`);
+
+                if (subtitleEl) slide.subtitle = subtitleEl.value;
+                if (contentEl) slide.content = contentEl.value;
+            });
+
+            alert('大纲已更新');
+            refreshLogs();
+        }
+
+        async function generateSlides() {
+            if (!currentOutline) {
+                alert('请先生成大纲');
+                return;
+            }
+
+            updateOutlineFromEditor();
+
+            showLoading('生成PPT中...');
+
+            try {
+                const response = await fetch('/api/generate-slides', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured })
+                });
+
+                if (!response.ok) throw new Error('生成PPT失败');
+
+                const result = await response.json();
+                displayPPT(result.slides_html);
+                refreshLogs();
+            } catch (error) {
+                alert('错误: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayPPT(html) {
+            const preview = document.getElementById('pptPreview');
+            const container = document.getElementById('previewContainer');
+
+            container.style.display = 'block';
+            preview.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+        }
+
+        function downloadHTML() {
+            const preview = document.getElementById('pptPreview');
+            const html = decodeURIComponent(preview.src.split(',')[1]);
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (currentOutline?.title || 'PPT') + '.html';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        async function refreshLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('logViewer').textContent = data.logs || '无日志';
+                    document.getElementById('logViewer').scrollTop = document.getElementById('logViewer').scrollHeight;
+                }
+            } catch (error) {
+                console.error('获取日志失败:', error);
+            }
+        }
+
+        function showLoading(message) {
+            const loading = document.getElementById('loading');
+            loading.querySelector('p').textContent = message;
+            loading.classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        function clearForm() {
+            document.getElementById('topic').value = '';
+            document.getElementById('outlineEditor').style.display = 'none';
+            document.getElementById('previewContainer').style.display = 'none';
+            currentOutline = null;
+        }
+
+        setInterval(refreshLogs, 5000);
+        refreshLogs();
+    </script>
+</body>
+</html>
