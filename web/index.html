@@ -182,15 +182,50 @@
         }
         .log-viewer {
             background: #1a1a1a;
-            color: #00ff00;
+            color: #ffffff;
             font-family: 'Consolas', monospace;
             padding: 15px;
             border-radius: 8px;
-            max-height: 400px;
+            max-height: 200px;
             overflow-y: auto;
-            margin-top: 15px;
+            margin-top: 10px;
             white-space: pre-wrap;
+            font-size: 11px;
+        }
+        .log-panel {
+            position: relative;
+        }
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .log-header h2 {
+            margin: 0;
+            font-size: 1.2em;
+        }
+        .collapse-btn {
+            background: #48bb78;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
             font-size: 12px;
+            font-weight: bold;
+        }
+        .collapse-btn:hover {
+            background: #38a169;
+        }
+        .log-content {
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        .log-content.collapsed {
+            max-height: 0;
+            padding: 0;
+            margin: 0;
         }
         .preview-container {
             margin-top: 20px;
@@ -296,10 +331,17 @@
             </div>
         </div>
 
-        <div class="panel" style="grid-column: 1 / -1;">
-            <h2>日志</h2>
-            <button class="btn btn-secondary" onclick="refreshLogs()">刷新日志</button>
-            <div id="logViewer" class="log-viewer">日志将显示在这里...</div>
+        <div class="panel log-panel" style="grid-column: 1 / -1;">
+            <div class="log-header">
+                <h2>日志</h2>
+                <div>
+                    <button class="btn btn-secondary" onclick="refreshLogs()" style="margin-right: 10px;">刷新日志</button>
+                    <button class="collapse-btn" onclick="toggleLog()">折叠</button>
+                </div>
+            </div>
+            <div id="logContent" class="log-content">
+                <div id="logViewer" class="log-viewer">日志将显示在这里...</div>
+            </div>
         </div>
     </div>
 
@@ -513,6 +555,19 @@
             document.getElementById('outlineEditor').style.display = 'none';
             document.getElementById('previewContainer').style.display = 'none';
             currentOutline = null;
+        }
+
+        function toggleLog() {
+            const logContent = document.getElementById('logContent');
+            const collapseBtn = document.querySelector('.collapse-btn');
+            
+            if (logContent.classList.contains('collapsed')) {
+                logContent.classList.remove('collapsed');
+                collapseBtn.textContent = '折叠';
+            } else {
+                logContent.classList.add('collapsed');
+                collapseBtn.textContent = '展开';
+            }
         }
 
         setInterval(refreshLogs, 5000);

@@ -150,13 +150,18 @@ async def get_logs(lines: int = 100):
         日志内容
     """
     try:
-        log_file = f"logs/ppt_ai_.log"
+        from datetime import datetime
+        # 使用绝对路径
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+        log_file = os.path.join(log_dir, f"ppt_ai_{datetime.now().strftime('%Y%m%d')}.log")
+        logger.info(f"尝试读取日志文件: {log_file}")
         if os.path.exists(log_file):
             with open(log_file, 'r', encoding='utf-8') as f:
                 all_lines = f.readlines()
                 return {"logs": ''.join(all_lines[-lines:])}
         else:
-            return {"logs": "日志文件不存在"}
+            logger.warning(f"日志文件不存在: {log_file}")
+            return {"logs": f"日志文件不存在: {log_file}"}
     except Exception as e:
         logger.error(f"读取日志失败: {e}")
         raise HTTPException(status_code=500, detail=f"读取日志失败: {str(e)}")

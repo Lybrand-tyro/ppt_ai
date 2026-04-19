@@ -14,6 +14,8 @@ class Logger:
 
     _instance: Optional['Logger'] = None
     _logger: Optional[logging.Logger] = None
+    _last_message: Optional[str] = None
+    _last_message_type: Optional[str] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -51,9 +53,40 @@ class Logger:
             self._logger.addHandler(console_handler)
             self._logger.addHandler(file_handler)
 
+    def _get_message_type(self, message: str) -> str:
+        """获取消息类型，用于去重判断"""
+        if "尝试读取日志文件" in message:
+            return "read_log_file"
+        elif "日志文件不存在" in message:
+            return "log_file_not_exists"
+        elif "读取日志失败" in message:
+            return "read_log_error"
+        else:
+            return message
+
+    def info(self, message: str):
+        """记录info级别日志，避免重复记录相同类型的消息"""
+        message_type = self._get_message_type(message)
+        if message_type != self._last_message_type:
+            self._logger.info(message)
+            self._last_message = message
+            self._last_message_type = message_type
+
+    def error(self, message: str):
+        """记录error级别日志"""
+        self._logger.error(message)
+        self._last_message = message
+        self._last_message_type = self._get_message_type(message)
+
+    def warning(self, message: str):
+        """记录warning级别日志"""
+        self._logger.warning(message)
+        self._last_message = message
+        self._last_message_type = self._get_message_type(message)
+
     @property
     def logger(self) -> logging.Logger:
         """获取日志记录器"""
         return self._logger
 
-logger = Logger().logger
+logger = Logger()
