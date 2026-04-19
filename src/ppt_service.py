@@ -3,7 +3,12 @@ PPT生成服务模块
 负责生成HTML和PPTX格式的PPT
 """
 
+import io
 from typing import Dict, Any, List
+from pptx import Presentation
+from pptx.util import Inches, Pt, Emu
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from .llm_service import llm_service
 from .logger import logger
 
@@ -336,5 +341,188 @@ class PPTService:
             font-weight: bold;
         }}
         """
+
+    def _hex_to_rgb(self, hex_color: str) -> RGBColor:
+        """将十六进制颜色转换为RGBColor"""
+        hex_color = hex_color.lstrip('#')
+        return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+
+    def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False) -> bytes:
+        """生成PPTX格式的PPT
+
+        Args:
+            outline: 大纲数据
+            scenario: 应用场景
+            use_llm: 是否使用LLM生成内容
+
+        Returns:
+            PPTX文件的字节数据
+        """
+        logger.info(f"开始生成PPTX: scenario={scenario}, use_llm={use_llm}")
+
+        config = self.scenario_configs.get(scenario, self.scenario_configs["general"])
+        color = self._hex_to_rgb(config["color_scheme"])
+        topic = outline.get("title", "")
+        language = outline.get("metadata", {}).get("language", "zh")
+
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+
+        blank_layout = prs.slide_layouts[6]
+
+        for slide_data in outline.get("slides", []):
+            slide_type = slide_data.get("type", "content")
+            title = slide_data.get("title", "")
+            subtitle = slide_data.get("subtitle", "")
+            content = slide_data.get("content", "")
+
+            if slide_type == "content" and use_llm and llm_service.is_configured:
+                try:
+                    content = llm_service.generate_content(title, slide_type, topic, language)
+                except Exception as e:
+                    logger.error(f"LLM内容生成失败: {e}")
+
+            slide = prs.slides.add_slide(blank_layout)
+
+            if slide_type == "title":
+                self._build_title_slide(slide, title, subtitle, color)
+            elif slide_type == "agenda":
+                self._build_agenda_slide(slide, title, content, color)
+            elif slide_type == "thankyou":
+                self._build_thankyou_slide(slide, title, subtitle, color)
+            else:
+                self._build_content_slide(slide, title, subtitle, content, color)
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        buffer.seek(0)
+        pptx_bytes = buffer.read()
+
+        logger.info(f"PPTX生成完成: {len(prs.slides)} 张幻灯片, {len(pptx_bytes)} 字节")
+        return pptx_bytes
+
+    def _build_title_slide(self, slide, title: str, subtitle: str, color: RGBColor):
+        """构建标题幻灯片"""
+        bg = slide.background
+        fill = bg.fill
+        fill.solid()
+        fill.fore_color.rgb = color
+
+        txBox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11.333), Inches(2))
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = title
+        p.font.size = Pt(44)
+        p.font.bold = True
+        p.font.color.rgb = RGBColor(255, 255, 255)
+        p.alignment = PP_ALIGN.CENTER
+
+        if subtitle:
+            p2 = tf.add_paragraph()
+            p2.text = subtitle
+            p2.font.size = Pt(24)
+            p2.font.color.rgb = RGBColor(230, 230, 230)
+            p2.alignment = PP_ALIGN.CENTER
+
+    def _build_agenda_slide(self, slide, title: str, content: str, color: RGBColor):
+        """构建目录幻灯片"""
+        bg = slide.background
+        fill = bg.fill
+        fill.solid()
+        fill.fore_color.rgb = RGBColor(245, 245, 245)
+
+        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.733), Inches(1.2))
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.text = title
+        p.font.size = Pt(36)
+        p.font.bold = True
+        p.font.color.rgb = color
+
+        content_box = slide.shapes.add_textbox(Inches(1.5), Inches(2), Inches(10.333), Inches(4.5))
+        tf2 = content_box.text_frame
+        tf2.word_wrap = True
+
+        lines = self._parse_bullet_points(content)
+        for i, line in enumerate(lines):
+            clean_line = line.lstrip('•-* ').strip()
+            if i == 0:
+                p = tf2.paragraphs[0]
+            else:
+                p = tf2.add_paragraph()
+            p.text = clean_line
+            p.font.size = Pt(22)
+            p.font.color.rgb = RGBColor(51, 51, 51)
+            p.space_after = Pt(12)
+            p.level = 0
+
+    def _build_thankyou_slide(self, slide, title: str, subtitle: str, color: RGBColor):
+        """构建致谢幻灯片"""
+        bg = slide.background
+        fill = bg.fill
+        fill.solid()
+        fill.fore_color.rgb = color
+
+        txBox = slide.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.333), Inches(2))
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.text = title
+        p.font.size = Pt(48)
+        p.font.bold = True
+        p.font.color.rgb = RGBColor(255, 255, 255)
+        p.alignment = PP_ALIGN.CENTER
+
+        if subtitle:
+            p2 = tf.add_paragraph()
+            p2.text = subtitle
+            p2.font.size = Pt(24)
+            p2.font.color.rgb = RGBColor(230, 230, 230)
+            p2.alignment = PP_ALIGN.CENTER
+
+    def _build_content_slide(self, slide, title: str, subtitle: str, content: str, color: RGBColor):
+        """构建内容幻灯片"""
+        bg = slide.background
+        fill = bg.fill
+        fill.solid()
+        fill.fore_color.rgb = RGBColor(255, 255, 255)
+
+        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.733), Inches(1.2))
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.text = title
+        p.font.size = Pt(36)
+        p.font.bold = True
+        p.font.color.rgb = color
+
+        if subtitle:
+            p2 = tf.add_paragraph()
+            p2.text = subtitle
+            p2.font.size = Pt(18)
+            p2.font.color.rgb = RGBColor(128, 128, 128)
+
+        content_box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11.333), Inches(4.5))
+        tf2 = content_box.text_frame
+        tf2.word_wrap = True
+
+        lines = self._parse_bullet_points(content)
+        for i, line in enumerate(lines):
+            clean_line = line.lstrip('•-* ').strip()
+            if i == 0:
+                p = tf2.paragraphs[0]
+            else:
+                p = tf2.add_paragraph()
+            p.text = "• " + clean_line
+            p.font.size = Pt(20)
+            p.font.color.rgb = RGBColor(51, 51, 51)
+            p.space_after = Pt(10)
+
+        left_line = slide.shapes.add_shape(
+            1, Inches(0.4), Inches(0.5), Inches(0.06), Inches(1.0)
+        )
+        left_line.fill.solid()
+        left_line.fill.fore_color.rgb = color
+        left_line.line.fill.background()
 
 ppt_service = PPTService()

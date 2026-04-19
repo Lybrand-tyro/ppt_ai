@@ -64,6 +64,12 @@ class Logger:
         else:
             return message
 
+    def debug(self, message: str):
+        """记录debug级别日志"""
+        self._logger.debug(message)
+        self._last_message = message
+        self._last_message_type = self._get_message_type(message)
+
     def info(self, message: str):
         """记录info级别日志，避免重复记录相同类型的消息"""
         message_type = self._get_message_type(message)

@@ -5,13 +5,14 @@ PPT AI - FastAPI主程序
 
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import sys
 import os
+import io
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -138,6 +139,39 @@ async def generate_slides(data: dict = Body(...)):
     except Exception as e:
         logger.error(f"幻灯片生成失败: {e}")
         raise HTTPException(status_code=500, detail=f"生成幻灯片失败: {str(e)}")
+
+@app.post("/api/download-pptx")
+async def download_pptx(data: dict = Body(...)):
+    """下载PPTX格式的PPT
+
+    Args:
+        data: 包含outline, scenario, use_llm的字典
+
+    Returns:
+        PPTX文件流
+    """
+    outline = data.get("outline")
+    scenario = data.get("scenario", "general")
+    use_llm = data.get("use_llm", False)
+
+    logger.info(f"收到PPTX下载请求: scenario={scenario}, use_llm={use_llm}")
+
+    if not outline:
+        raise HTTPException(status_code=400, detail="outline不能为空")
+
+    try:
+        pptx_bytes = ppt_service.generate_pptx(outline, scenario, use_llm)
+        filename = (outline.get("title", "PPT") + ".pptx").replace(" ", "_")
+        encoded_filename = quote(filename)
+        logger.info(f"PPTX下载成功: {filename}")
+        return StreamingResponse(
+            io.BytesIO(pptx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+        )
+    except Exception as e:
+        logger.error(f"PPTX生成失败: {e}")
+        raise HTTPException(status_code=500, detail=f"生成PPTX失败: {str(e)}")
 
 @app.get("/api/logs")
 async def get_logs(lines: int = 100):

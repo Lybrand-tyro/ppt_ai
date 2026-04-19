@@ -93,6 +93,14 @@
             background: #38a169;
             transform: translateY(-2px);
         }
+        .btn-download {
+            background: #e67e22;
+            color: white;
+        }
+        .btn-download:hover {
+            background: #d35400;
+            transform: translateY(-2px);
+        }
         .btn-group {
             display: flex;
             gap: 10px;
@@ -326,7 +334,10 @@
 
             <div class="preview-container" id="previewContainer" style="display: none;">
                 <h2>第三步：预览PPT</h2>
-                <button class="btn btn-secondary" onclick="downloadHTML()">下载HTML</button>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="downloadHTML()">下载HTML</button>
+                    <button class="btn btn-download" onclick="downloadPPTX()">下载PPTX</button>
+                </div>
                 <iframe id="pptPreview" class="preview-iframe"></iframe>
             </div>
         </div>
@@ -525,6 +536,39 @@
             a.download = (currentOutline?.title || 'PPT') + '.html';
             a.click();
             URL.revokeObjectURL(url);
+        }
+
+        async function downloadPPTX() {
+            if (!currentOutline) {
+                alert('请先生成大纲');
+                return;
+            }
+
+            updateOutlineFromEditor();
+            showLoading('生成PPTX文件中...');
+
+            try {
+                const response = await fetch('/api/download-pptx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured })
+                });
+
+                if (!response.ok) throw new Error('生成PPTX失败');
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = (currentOutline?.title || 'PPT') + '.pptx';
+                a.click();
+                URL.revokeObjectURL(url);
+                refreshLogs();
+            } catch (error) {
+                alert('错误: ' + error.message);
+            } finally {
+                hideLoading();
+            }
         }
 
         async function refreshLogs() {
