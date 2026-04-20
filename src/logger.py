@@ -7,15 +7,14 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 class Logger:
     """日志管理器"""
 
-    _instance: Optional['Logger'] = None
-    _logger: Optional[logging.Logger] = None
-    _last_message: Optional[str] = None
-    _last_message_type: Optional[str] = None
+    _instance: 'Logger | None' = None
+    _logger: logging.Logger | None = None
+    _last_message: str | None = None
+    _last_message_type: str | None = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -66,7 +65,8 @@ class Logger:
 
     def debug(self, message: str):
         """记录debug级别日志"""
-        self._logger.debug(message)
+        if self._logger is not None:
+            self._logger.debug(message)
         self._last_message = message
         self._last_message_type = self._get_message_type(message)
 
@@ -74,25 +74,29 @@ class Logger:
         """记录info级别日志，避免重复记录相同类型的消息"""
         message_type = self._get_message_type(message)
         if message_type != self._last_message_type:
-            self._logger.info(message)
+            if self._logger is not None:
+                self._logger.info(message)
             self._last_message = message
             self._last_message_type = message_type
 
     def error(self, message: str):
         """记录error级别日志"""
-        self._logger.error(message)
+        if self._logger is not None:
+            self._logger.error(message)
         self._last_message = message
         self._last_message_type = self._get_message_type(message)
 
     def warning(self, message: str):
         """记录warning级别日志"""
-        self._logger.warning(message)
+        if self._logger is not None:
+            self._logger.warning(message)
         self._last_message = message
         self._last_message_type = self._get_message_type(message)
 
     @property
     def logger(self) -> logging.Logger:
         """获取日志记录器"""
+        assert self._logger is not None
         return self._logger
 
 logger = Logger()

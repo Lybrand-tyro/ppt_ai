@@ -1,6 +1,7 @@
 """
 PPT AI - FastAPI主程序
 提供PPT生成API，支持LLM生成大纲和内容
+支持多种联网搜索API
 """
 
 from fastapi import FastAPI, HTTPException, Body
@@ -16,13 +17,12 @@ from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from .llm_service import llm_service
+from .llm_service import llm_service, web_search_service
 from .ppt_service import ppt_service
 from .logger import logger
 
 app = FastAPI(title="PPT AI", description="AI驱动的PPT生成器")
 
-# 静态文件服务
 web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
 if os.path.exists(web_dir):
     app.mount("/static", StaticFiles(directory=web_dir), name="static")
@@ -43,14 +43,6 @@ class LLMConfig(BaseModel):
 
 @app.post("/api/configure-llm")
 async def configure_llm(config: LLMConfig):
-    """配置LLM服务
-
-    Args:
-        config: LLM配置信息
-
-    Returns:
-        配置结果
-    """
     logger.info(f"配置LLM: endpoint={config.api_endpoint}, model={config.model_name}, is_local={config.is_local}")
     try:
         llm_service.configure(
@@ -66,11 +58,6 @@ async def configure_llm(config: LLMConfig):
 
 @app.get("/api/llm-status")
 async def get_llm_status():
-    """获取LLM配置状态
-
-    Returns:
-        LLM状态信息
-    """
     return {
         "is_configured": llm_service.is_configured,
         "config": {
@@ -80,22 +67,74 @@ async def get_llm_status():
         } if llm_service.is_configured else None
     }
 
+@app.post("/api/configure-web-search")
+async def configure_web_search(data: dict = Body(...)):
+    provider = data.get("provider")
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider不能为空")
+
+    try:
+        if provider in ("tavily", "serpapi", "bing", "brave"):
+            api_key = data.get("api_key", "")
+            if not api_key:
+                raise HTTPException(status_code=400, detail=f"{provider}需要api_key")
+            web_search_service.configure_provider(provider, api_key=api_key)
+        elif provider == "google":
+            api_key = data.get("api_key", "")
+            cx = data.get("cx", "")
+            if not api_key or not cx:
+                raise HTTPException(status_code=400, detail="Google搜索需要api_key和cx")
+            web_search_service.configure_provider(provider, api_key=api_key, cx=cx)
+        else:
+            raise HTTPException(status_code=400, detail=f"不支持的搜索引擎: {provider}")
+
+        return {
+            "status": "success",
+            "message": f"{web_search_service.get_active_provider_name()}联网搜索配置成功",
+            "active_provider": web_search_service.active_provider
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"联网搜索配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"配置失败: {str(e)}")
+
+@app.get("/api/web-search-status")
+async def get_web_search_status():
+    return {
+        "is_configured": web_search_service.is_configured(),
+        "active_provider": web_search_service.active_provider,
+        "active_provider_name": web_search_service.get_active_provider_name(),
+        "providers": web_search_service.get_provider_status()
+    }
+
+@app.post("/api/web-search")
+async def web_search(data: dict = Body(...)):
+    query = data.get("query")
+    max_results = data.get("max_results", 5)
+
+    if not query:
+        raise HTTPException(status_code=400, detail="query不能为空")
+
+    if not web_search_service.is_configured():
+        raise HTTPException(status_code=400, detail="联网搜索未配置")
+
+    try:
+        result = web_search_service.search(query, max_results=max_results)
+        return result
+    except Exception as e:
+        logger.error(f"联网搜索失败: {e}")
+        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+
 @app.post("/api/generate-outline")
 async def generate_outline(data: dict = Body(...)):
-    """生成PPT大纲
-
-    Args:
-        data: 包含topic, scenario, language, use_llm的字典
-
-    Returns:
-        生成的大纲数据
-    """
     topic = data.get("topic")
     scenario = data.get("scenario", "general")
     language = data.get("language", "zh")
     use_llm = data.get("use_llm", False)
+    use_web_search = data.get("use_web_search", False)
 
-    logger.info(f"收到大纲生成请求: topic={topic}, scenario={scenario}, language={language}, use_llm={use_llm}")
+    logger.info(f"收到大纲生成请求: topic={topic}, scenario={scenario}, language={language}, use_llm={use_llm}, use_web_search={use_web_search}")
 
     if not topic:
         raise HTTPException(status_code=400, detail="topic不能为空")
@@ -103,7 +142,7 @@ async def generate_outline(data: dict = Body(...)):
     try:
         if use_llm and llm_service.is_configured:
             logger.info("使用LLM生成大纲")
-            outline = llm_service.generate_outline(topic, language)
+            outline = llm_service.generate_outline(topic, language, use_web_search=use_web_search)
         else:
             logger.info("使用模板生成大纲")
             outline = llm_service._generate_template_outline(topic, language)
@@ -115,25 +154,18 @@ async def generate_outline(data: dict = Body(...)):
 
 @app.post("/api/generate-slides")
 async def generate_slides(data: dict = Body(...)):
-    """生成PPT幻灯片HTML
-
-    Args:
-        data: 包含outline, scenario, use_llm的字典
-
-    Returns:
-        生成的HTML内容
-    """
     outline = data.get("outline")
     scenario = data.get("scenario", "general")
     use_llm = data.get("use_llm", False)
+    use_web_search = data.get("use_web_search", False)
 
-    logger.info(f"收到幻灯片生成请求: scenario={scenario}, use_llm={use_llm}")
+    logger.info(f"收到幻灯片生成请求: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
     if not outline:
         raise HTTPException(status_code=400, detail="outline不能为空")
 
     try:
-        slides_html = await ppt_service.generate_html(outline, scenario, use_llm)
+        slides_html = await ppt_service.generate_html(outline, scenario, use_llm, use_web_search)
         logger.info(f"幻灯片生成成功: {len(slides_html)} 字符")
         return {"slides_html": slides_html}
     except Exception as e:
@@ -142,25 +174,18 @@ async def generate_slides(data: dict = Body(...)):
 
 @app.post("/api/download-pptx")
 async def download_pptx(data: dict = Body(...)):
-    """下载PPTX格式的PPT
-
-    Args:
-        data: 包含outline, scenario, use_llm的字典
-
-    Returns:
-        PPTX文件流
-    """
     outline = data.get("outline")
     scenario = data.get("scenario", "general")
     use_llm = data.get("use_llm", False)
+    use_web_search = data.get("use_web_search", False)
 
-    logger.info(f"收到PPTX下载请求: scenario={scenario}, use_llm={use_llm}")
+    logger.info(f"收到PPTX下载请求: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
     if not outline:
         raise HTTPException(status_code=400, detail="outline不能为空")
 
     try:
-        pptx_bytes = ppt_service.generate_pptx(outline, scenario, use_llm)
+        pptx_bytes = ppt_service.generate_pptx(outline, scenario, use_llm, use_web_search)
         filename = (outline.get("title", "PPT") + ".pptx").replace(" ", "_")
         encoded_filename = quote(filename)
         logger.info(f"PPTX下载成功: {filename}")
@@ -175,17 +200,8 @@ async def download_pptx(data: dict = Body(...)):
 
 @app.get("/api/logs")
 async def get_logs(lines: int = 100):
-    """获取日志内容
-
-    Args:
-        lines: 返回的日志行数
-
-    Returns:
-        日志内容
-    """
     try:
         from datetime import datetime
-        # 使用绝对路径
         log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
         log_file = os.path.join(log_dir, f"ppt_ai_{datetime.now().strftime('%Y%m%d')}.log")
         logger.info(f"尝试读取日志文件: {log_file}")
@@ -202,7 +218,6 @@ async def get_logs(lines: int = 100):
 
 @app.get("/")
 async def root():
-    """首页"""
     index_path = os.path.join(web_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -213,6 +228,9 @@ async def root():
             "endpoints": {
                 "configure_llm": "/api/configure-llm",
                 "llm_status": "/api/llm-status",
+                "configure_web_search": "/api/configure-web-search",
+                "web_search_status": "/api/web-search-status",
+                "web_search": "/api/web-search",
                 "generate_outline": "/api/generate-outline",
                 "generate_slides": "/api/generate-slides",
                 "logs": "/api/logs"

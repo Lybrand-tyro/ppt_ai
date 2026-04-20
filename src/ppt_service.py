@@ -6,10 +6,10 @@ PPT生成服务模块
 import io
 from typing import Dict, Any, List
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
+from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from .llm_service import llm_service
+from pptx.enum.text import PP_ALIGN
+from .llm_service import llm_service, web_search_service
 from .logger import logger
 
 JAVASCRIPT_CODE = """
@@ -94,18 +94,19 @@ class PPTService:
             }
         }
 
-    async def generate_html(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False) -> str:
+    async def generate_html(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False, use_web_search: bool = False) -> str:
         """生成HTML格式的PPT
 
         Args:
             outline: 大纲数据
             scenario: 应用场景
             use_llm: 是否使用LLM生成内容
+            use_web_search: 是否使用联网搜索增强
 
         Returns:
             HTML字符串
         """
-        logger.info(f"开始生成HTML PPT: scenario={scenario}, use_llm={use_llm}")
+        logger.info(f"开始生成HTML PPT: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
         config = self.scenario_configs.get(scenario, self.scenario_configs["general"])
         topic = outline.get("title", "")
@@ -122,7 +123,7 @@ class PPTService:
             if slide_type == "content" and use_llm and llm_service.is_configured:
                 logger.info(f"使用LLM生成幻灯片内容: {title}")
                 try:
-                    content = llm_service.generate_content(title, slide_type, topic, language)
+                    content = llm_service.generate_content(title, slide_type, topic, language, use_web_search=use_web_search)
                     enriched_slide["content"] = content
                     logger.info(f"LLM内容生成成功: {title}")
                 except Exception as e:
@@ -174,7 +175,7 @@ class PPTService:
         logger.info(f"HTML PPT生成完成: {total_slides} 张幻灯片, {len(complete_html)} 字符")
         return complete_html
 
-    def _expand_slide_with_template(self, slide: Dict[str, Any], topic: str) -> List[Dict[str, Any]]:
+    def _expand_slide_with_template(self, slide: Dict[str, Any], _topic: str) -> List[Dict[str, Any]]:
         """使用模板扩展内容幻灯片"""
         title = slide.get("title", "")
         content = slide.get("content", "")
@@ -219,7 +220,7 @@ class PPTService:
 
         return points if points else [content]
 
-    def _generate_slide_html(self, slide: Dict[str, Any], config: Dict[str, Any]) -> str:
+    def _generate_slide_html(self, slide: Dict[str, Any], _config: Dict[str, Any]) -> str:
         """生成单个幻灯片的HTML"""
         slide_type = slide.get("type", "content")
         title = slide.get("title", "")
@@ -347,18 +348,19 @@ class PPTService:
         hex_color = hex_color.lstrip('#')
         return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
 
-    def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False) -> bytes:
+    def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False, use_web_search: bool = False) -> bytes:
         """生成PPTX格式的PPT
 
         Args:
             outline: 大纲数据
             scenario: 应用场景
             use_llm: 是否使用LLM生成内容
+            use_web_search: 是否使用联网搜索增强
 
         Returns:
             PPTX文件的字节数据
         """
-        logger.info(f"开始生成PPTX: scenario={scenario}, use_llm={use_llm}")
+        logger.info(f"开始生成PPTX: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
         config = self.scenario_configs.get(scenario, self.scenario_configs["general"])
         color = self._hex_to_rgb(config["color_scheme"])
@@ -379,7 +381,7 @@ class PPTService:
 
             if slide_type == "content" and use_llm and llm_service.is_configured:
                 try:
-                    content = llm_service.generate_content(title, slide_type, topic, language)
+                    content = llm_service.generate_content(title, slide_type, topic, language, use_web_search=use_web_search)
                 except Exception as e:
                     logger.error(f"LLM内容生成失败: {e}")
 

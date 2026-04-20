@@ -1,0 +1,243 @@
+PPT AI - 业务逻辑说明
+========================
+
+一、系统概览
+------------
+PPT AI 是一个基于 LLM 的智能 PPT 生成器，用户输入主题后自动生成大纲和完整 PPT。
+支持 HTML 预览和 PPTX 下载两种输出格式。
+
+核心能力：
+  - LLM 驱动的大纲生成与内容填充
+  - 多种联网搜索引擎增强内容质量
+  - 多场景主题风格（通用/科技/商务/教育/旅游/科学）
+  - 前端实时预览 + 一键下载
+
+
+二、项目结构
+------------
+ppt_ai/
+├── run.py                  # 入口脚本，启动 Uvicorn 服务器
+├── requirements.txt        # Python 依赖
+├── web/
+│   └── index.html          # 前端单页应用
+└── src/
+    ├── __init__.py
+    ├── main.py             # FastAPI 主程序，定义所有 API 端点
+    ├── llm_service.py      # LLM 服务 + 联网搜索服务
+    ├── ppt_service.py      # PPT 生成服务（HTML / PPTX）
+    └── logger.py           # 日志模块
+
+
+三、核心业务流程
+----------------
+
+流程一：生成大纲
+  用户输入主题 → 前端调用 /api/generate-outline
+    → 判断是否启用 LLM：
+      ├─ 是 → LLMService.generate_outline()
+      │       ├─ 若开启联网搜索 → WebSearchService.search_for_content() 获取参考资料
+      │       │                     └─ 将搜索结果注入 LLM prompt
+      │       └─ 调用 LLM API → 解析 JSON 响应 → 返回大纲
+      └─ 否 → 使用内置模板生成大纲
+    → 返回大纲 JSON 给前端展示和编辑
+
+流程二：生成 PPT
+  用户编辑大纲后点击"生成PPT" → 前端调用 /api/generate-slides
+    → PPTService.generate_html()
+      → 遍历每张幻灯片：
+        ├─ content 类型 + 启用 LLM → LLMService.generate_content()
+        │   └─ 若开启联网搜索 → 再次搜索该幻灯片主题的补充资料
+        └─ 其他类型（title/agenda/thankyou）→ 直接使用大纲数据
+      → 内容幻灯片按 3 个要点/页拆分
+      → 生成 CSS + HTML + JavaScript 完整页面
+    → 返回 HTML 给前端 iframe 预览
+
+流程三：下载 PPTX
+  用户点击"下载PPTX" → 前端调用 /api/download-pptx
+    → PPTService.generate_pptx()
+      → 同流程二的内容生成逻辑
+      → 使用 python-pptx 库生成 .pptx 文件
+    → 返回文件流下载
+
+
+四、模块详细说明
+----------------
+
+4.1 LLM 服务 (llm_service.py)
+──────────────────────────────
+
+类：LLMService
+  职责：调用 OpenAI 兼容的 LLM API 生成大纲和内容
+  配置：api_endpoint / api_key / model_name / is_local
+
+  generate_outline(topic, language, use_web_search)
+    → 构建大纲 prompt（含联网搜索上下文）
+    → 调用 LLM API
+    → 解析 JSON 响应（支持 ```json 包裹、多余文本容错）
+    → 失败时回退到模板生成
+
+  generate_content(slide_title, slide_type, topic, language, use_web_search)
+    → 构建内容 prompt（含联网搜索上下文）
+    → 调用 LLM API
+    → 返回 bullet point 格式内容
+    → 失败时回退到模板生成
+
+  _call_llm(prompt)
+    → POST 请求到配置的 API 端点
+    → 支持 Bearer Token 认证
+    → 超时 120 秒
+    → 解析 choices[0].message.content
+
+
+4.2 联网搜索服务 (llm_service.py)
+──────────────────────────────────
+
+架构：策略模式
+  抽象基类：WebSearchProvider
+    - get_name() / configure() / is_configured() / search()
+    - search_for_content() 默认实现：搜索 → 提取 answer 或拼接 results.content
+
+  具体实现：
+    ┌──────────┬──────────────────────────────┬────────────┐
+    │ 引擎     │ API 端点                      │ 免费额度    │
+    ├──────────┼──────────────────────────────┼────────────┤
+    │ Tavily   │ https://api.tavily.com/search │ 1000次/月  │
+    │ SerpAPI  │ https://serpapi.com/search    │ 100次/月   │
+    │ Bing     │ Azure Bing Search API v7      │ 1000次/月  │
+    │ Google   │ Custom Search API             │ 100次/天   │
+    │ Brave    │ Brave Search API              │ 2000次/月  │
+    └──────────┴──────────────────────────────┴────────────┘
+
+  统一入口：WebSearchService
+    - 管理所有 provider 实例
+    - 运行时切换活跃搜索引擎
+    - configure_provider(key, **kwargs) → 配置并激活
+    - search(query) → 委托给活跃 provider
+    - search_for_content(slide_title, topic, language) → 为幻灯片搜索补充资料
+    - get_provider_status() → 返回所有引擎配置状态
+
+
+4.3 PPT 生成服务 (ppt_service.py)
+──────────────────────────────────
+
+类：PPTService
+  场景配置：
+    general    → #2E86AB 蓝色
+    technology → #3498DB 科技蓝
+    business   → #27AE60 商务绿
+    education  → #9B59B6 教育紫
+    tourism    → #E67E22 旅游橙
+    science    → #1ABC9C 科学青
+
+  generate_html(outline, scenario, use_llm, use_web_search)
+    → 遍历幻灯片 → LLM 生成内容 → 拆分要点 → 生成 HTML
+    → 输出：完整 HTML 页面（CSS + JS + 幻灯片导航）
+
+  generate_pptx(outline, scenario, use_llm, use_web_search)
+    → 同上逻辑 → 使用 python-pptx 生成 .pptx
+    → 输出：字节流
+
+  _expand_slide_with_template(slide, topic)
+    → 将超过 3 个要点的幻灯片拆分为多页
+
+  _generate_slide_html(slide, config)
+    → 根据类型生成：title / agenda / content / thankyou
+
+  _generate_css_styles(config)
+    → 生成完整 CSS（含导航栏、幻灯片动画）
+
+  _build_title_slide / _build_agenda_slide / _build_content_slide / _build_thankyou_slide
+    → python-pptx 版本的各类型幻灯片构建
+
+
+4.4 FastAPI 主程序 (main.py)
+────────────────────────────
+
+API 端点：
+  POST /api/configure-llm          → 配置 LLM（端点/密钥/模型/是否本地）
+  GET  /api/llm-status             → 获取 LLM 配置状态
+
+  POST /api/configure-web-search   → 配置联网搜索（引擎类型 + 密钥）
+  GET  /api/web-search-status      → 获取所有搜索引擎状态
+  POST /api/web-search             → 执行联网搜索
+
+  POST /api/generate-outline       → 生成大纲
+  POST /api/generate-slides        → 生成 PPT HTML
+  POST /api/download-pptx          → 下载 PPTX 文件
+
+  GET  /api/logs                   → 获取日志
+  GET  /                           → 首页（index.html）
+
+
+4.5 前端 (index.html)
+─────────────────────
+
+页面布局：左右双栏
+  左栏：
+    - 主题输入 + 语言选择
+    - 联网搜索开关 + 可折叠搜索引擎配置面板
+    - LLM 配置区
+  右栏：
+    - 大纲编辑器
+    - PPT 预览 iframe
+  底部：
+    - 日志查看器（可折叠）
+
+配置持久化：
+  - localStorage 存储 LLM 配置和搜索引擎配置
+  - 页面加载时自动恢复：回填表单 + 发送到后端配置
+  - 切换搜索引擎时自动回填已保存的 API 密钥
+
+
+五、数据流
+----------
+
+用户输入主题
+    │
+    ▼
+┌─────────────────────────┐
+│  /api/generate-outline  │
+│  ┌───────────────────┐  │
+│  │ use_llm=true?     │──┼── 否 ──→ 模板大纲
+│  │ use_web_search?   │  │
+│  └───────┬───────────┘  │
+│          │是             │
+│          ▼               │
+│  WebSearchService        │
+│  .search_for_content()   │
+│          │               │
+│          ▼               │
+│  LLMService              │
+│  .generate_outline()     │
+│  (prompt + 搜索上下文)    │
+│          │               │
+│          ▼               │
+│  解析 JSON 大纲          │
+└─────────────────────────┘
+    │
+    ▼
+前端展示大纲（可编辑）
+    │
+    ▼
+┌─────────────────────────┐
+│  /api/generate-slides   │
+│  ┌───────────────────┐  │
+│  │ 遍历每张幻灯片     │  │
+│  │  ├─ content类型   │  │
+│  │  │  ├─ LLM生成   │  │
+│  │  │  │  └─ +搜索  │  │
+│  │  │  └─ 拆分要点  │  │
+│  │  └─ 其他类型      │  │
+│  │     └─ 直接使用  │  │
+│  └───────────────────┘  │
+│          │               │
+│          ▼               │
+│  生成 HTML/CSS/JS        │
+└─────────────────────────┘
+    │
+    ▼
+前端 iframe 预览
+    │
+    ├──→ 下载 HTML
+    │
+    └──→ /api/download-pptx → python-pptx 生成 → 文件下载

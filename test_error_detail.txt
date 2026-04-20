@@ -1,2 +1,0 @@
-Step 1 SUCCESS: Outline = Test
-Step 2 SUCCESS: PPT HTML = 5895 chars

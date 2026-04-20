@@ -101,10 +101,16 @@
             background: #d35400;
             transform: translateY(-2px);
         }
+        .btn-sm {
+            padding: 6px 14px;
+            font-size: 13px;
+        }
         .btn-group {
             display: flex;
             gap: 10px;
             margin-top: 15px;
+            flex-wrap: wrap;
+            align-items: center;
         }
         .checkbox-row {
             display: flex;
@@ -141,6 +147,181 @@
         .llm-config h3 {
             color: #667eea;
             margin-bottom: 10px;
+        }
+        .web-search-section {
+            margin: 12px 0;
+        }
+        .web-search-toggle {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: white;
+            border-radius: 10px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .web-search-toggle.active {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 52px;
+            height: 28px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .3s;
+            border-radius: 28px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #667eea;
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+        .toggle-label {
+            font-weight: bold;
+            color: #333;
+        }
+        .toggle-desc {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 2px;
+        }
+        .feature-badges {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .feature-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: bold;
+        }
+        .feature-badge.search {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .feature-badge.enrich {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        .web-search-config {
+            background: #f0f4ff;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            margin-top: 8px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #e8edfa;
+            cursor: pointer;
+            user-select: none;
+        }
+        .config-header h4 {
+            color: #4c6ef5;
+            margin: 0;
+            font-size: 0.95em;
+        }
+        .config-header .arrow {
+            transition: transform 0.3s;
+            color: #4c6ef5;
+            font-weight: bold;
+        }
+        .config-header .arrow.up {
+            transform: rotate(180deg);
+        }
+        .config-body {
+            padding: 15px;
+            max-height: 500px;
+            overflow: hidden;
+            transition: max-height 0.3s ease, padding 0.3s ease;
+        }
+        .config-body.collapsed {
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        .provider-selector {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .provider-btn {
+            padding: 6px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 20px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: bold;
+            transition: all 0.2s;
+            color: #555;
+        }
+        .provider-btn:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+        .provider-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        .provider-btn .free-tag {
+            font-size: 0.7em;
+            background: #48bb78;
+            color: white;
+            padding: 1px 6px;
+            border-radius: 8px;
+            margin-left: 4px;
+        }
+        .provider-config-form {
+            margin-top: 10px;
+        }
+        .provider-help {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 4px;
+        }
+        .provider-help a {
+            color: #4c6ef5;
         }
         .loading {
             display: none;
@@ -245,27 +426,6 @@
             border-radius: 10px;
             background: white;
         }
-        .step-indicator {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
-        .step {
-            padding: 10px 20px;
-            background: #e0e0e0;
-            color: #666;
-            border-radius: 20px;
-            margin: 0 5px;
-            font-weight: bold;
-        }
-        .step.active {
-            background: #667eea;
-            color: white;
-        }
-        .step.completed {
-            background: #48bb78;
-            color: white;
-        }
     </style>
 </head>
 <body>
@@ -288,6 +448,50 @@
                 </select>
             </div>
 
+            <div class="web-search-section">
+                <div class="web-search-toggle" id="webSearchToggle">
+                    <label class="toggle-switch" onclick="event.stopPropagation()">
+                        <input type="checkbox" id="useWebSearch" onchange="onWebSearchToggle()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <div>
+                        <div class="toggle-label">🌐 联网搜索增强</div>
+                        <div class="toggle-desc">开启后，LLM将联网搜索资料，内容更丰富、更准确</div>
+                        <div class="feature-badges">
+                            <span class="feature-badge search">🔍 全网搜索</span>
+                            <span class="feature-badge enrich">📊 内容增强</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="web-search-config" id="webSearchConfig">
+                    <div class="config-header" onclick="toggleWebSearchConfig()">
+                        <h4>⚙️ 搜索引擎配置</h4>
+                        <span class="arrow up" id="configArrow">▼</span>
+                    </div>
+                    <div class="config-body" id="configBody">
+                        <div class="provider-selector" id="providerSelector">
+                            <button class="provider-btn active" data-provider="tavily" onclick="selectProvider('tavily')">Tavily</button>
+                            <button class="provider-btn" data-provider="serpapi" onclick="selectProvider('serpapi')">SerpAPI</button>
+                            <button class="provider-btn" data-provider="bing" onclick="selectProvider('bing')">Bing</button>
+                            <button class="provider-btn" data-provider="google" onclick="selectProvider('google')">Google</button>
+                            <button class="provider-btn" data-provider="brave" onclick="selectProvider('brave')">Brave</button>
+                        </div>
+
+                        <div class="provider-config-form" id="providerConfigForm">
+                        </div>
+
+                        <div class="btn-group">
+                            <button class="btn btn-primary btn-sm" onclick="configureWebSearch()">保存配置</button>
+                            <span id="webSearchStatus">
+                                <span class="status-indicator disconnected"></span>
+                                <span>联网搜索未配置</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="generateOutline()">生成大纲</button>
                 <button class="btn btn-secondary" onclick="useManualOutline()">使用手动大纲</button>
@@ -298,7 +502,7 @@
                 <h3>LLM配置</h3>
                 <div class="form-group">
                     <label for="apiEndpoint">API端点</label>
-                    <input type="text" id="apiEndpoint" placeholder="http://localhost:8080/v1/chat/completions">
+                    <input type="text" id="apiEndpoint" placeholder="http://localhost:18080/v1/chat/completions">
                 </div>
                 <div class="form-group">
                     <label for="apiKey">API密钥</label>
@@ -363,6 +567,100 @@
     <script>
         let currentOutline = null;
         let llmConfigured = false;
+        let webSearchConfigured = false;
+        let currentProvider = 'tavily';
+
+        const providerForms = {
+            tavily: `
+                <div class="form-group">
+                    <label>Tavily API密钥</label>
+                    <input type="text" id="providerApiKey" placeholder="tvly-xxxxxxxxxxxxxxxxxxxxxxxx">
+                </div>
+                <div class="provider-help">获取免费API密钥：<a href="https://app.tavily.com" target="_blank">https://app.tavily.com</a>（新账户1000次免费搜索）</div>
+            `,
+            serpapi: `
+                <div class="form-group">
+                    <label>SerpAPI API密钥</label>
+                    <input type="text" id="providerApiKey" placeholder="your_serpapi_key">
+                </div>
+                <div class="provider-help">获取API密钥：<a href="https://serpapi.com/manage-api-key" target="_blank">https://serpapi.com</a>（100次/月免费）</div>
+            `,
+            bing: `
+                <div class="form-group">
+                    <label>Bing Search API密钥</label>
+                    <input type="text" id="providerApiKey" placeholder="your_azure_bing_key">
+                </div>
+                <div class="provider-help">获取API密钥：<a href="https://www.microsoft.com/en-us/bing/apis/bing-web-search-api" target="_blank">Azure Bing Search</a>（1000次/月免费）</div>
+            `,
+            google: `
+                <div class="form-group">
+                    <label>Google API密钥</label>
+                    <input type="text" id="providerApiKey" placeholder="your_google_api_key">
+                </div>
+                <div class="form-group">
+                    <label>自定义搜索引擎ID (cx)</label>
+                    <input type="text" id="providerCx" placeholder="your_custom_search_engine_id">
+                </div>
+                <div class="provider-help">获取API密钥：<a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a> | 创建搜索引擎：<a href="https://programmablesearchengine.google.com/" target="_blank">Programmable Search Engine</a></div>
+            `,
+            brave: `
+                <div class="form-group">
+                    <label>Brave Search API密钥</label>
+                    <input type="text" id="providerApiKey" placeholder="your_brave_api_key">
+                </div>
+                <div class="provider-help">获取免费API密钥：<a href="https://brave.com/search/api/" target="_blank">https://brave.com/search/api</a>（免费2000次/月）</div>
+            `
+        };
+
+        function selectProvider(provider) {
+            currentProvider = provider;
+            document.querySelectorAll('.provider-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.provider === provider);
+            });
+            document.getElementById('providerConfigForm').innerHTML = providerForms[provider] || '';
+
+            const saved = JSON.parse(localStorage.getItem('webSearchConfig') || '{}');
+            if (saved.provider === provider) {
+                setTimeout(() => {
+                    const apiKeyEl = document.getElementById('providerApiKey');
+                    if (apiKeyEl && saved.api_key) apiKeyEl.value = saved.api_key;
+                    const cxEl = document.getElementById('providerCx');
+                    if (cxEl && saved.cx) cxEl.value = saved.cx;
+                }, 0);
+            }
+        }
+
+        function toggleWebSearchConfig() {
+            const body = document.getElementById('configBody');
+            const arrow = document.getElementById('configArrow');
+
+            if (body.classList.contains('collapsed')) {
+                body.classList.remove('collapsed');
+                arrow.classList.add('up');
+            } else {
+                body.classList.add('collapsed');
+                arrow.classList.remove('up');
+            }
+        }
+
+        function onWebSearchToggle() {
+            const toggle = document.getElementById('webSearchToggle');
+            const checked = document.getElementById('useWebSearch').checked;
+            if (checked) {
+                toggle.classList.add('active');
+                if (!webSearchConfigured) {
+                    const body = document.getElementById('configBody');
+                    if (body.classList.contains('collapsed')) {
+                        toggleWebSearchConfig();
+                    }
+                    alert('请先配置搜索引擎以启用联网搜索功能');
+                    document.getElementById('useWebSearch').checked = false;
+                    toggle.classList.remove('active');
+                }
+            } else {
+                toggle.classList.remove('active');
+            }
+        }
 
         async function configureLLM() {
             const apiEndpoint = document.getElementById('apiEndpoint').value;
@@ -387,6 +685,7 @@
                 if (response.ok) {
                     llmConfigured = true;
                     document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                    localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: apiEndpoint, api_key: apiKey, model_name: modelName, is_local: isLocal }));
                     alert('LLM配置成功！');
                 } else {
                     alert('LLM配置失败');
@@ -398,22 +697,76 @@
             }
         }
 
+        async function configureWebSearch() {
+            const payload = { provider: currentProvider };
+
+            if (currentProvider === 'google') {
+                const apiKey = document.getElementById('providerApiKey')?.value;
+                const cx = document.getElementById('providerCx')?.value;
+                if (!apiKey || !cx) {
+                    alert('请填写Google API密钥和搜索引擎ID');
+                    return;
+                }
+                payload.api_key = apiKey;
+                payload.cx = cx;
+            } else {
+                const apiKey = document.getElementById('providerApiKey')?.value;
+                if (!apiKey) {
+                    alert('请填写API密钥');
+                    return;
+                }
+                payload.api_key = apiKey;
+            }
+
+            showLoading('配置联网搜索中...');
+
+            try {
+                const response = await fetch('/api/configure-web-search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    webSearchConfigured = true;
+                    const data = await response.json();
+                    const name = data.active_provider || currentProvider;
+                    document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
+                    localStorage.setItem('webSearchConfig', JSON.stringify(payload));
+                    alert(`${name} 联网搜索配置成功！现在可以开启联网搜索增强功能。`);
+                } else {
+                    const err = await response.json();
+                    alert('配置失败: ' + (err.detail || '未知错误'));
+                }
+            } catch (error) {
+                alert('配置错误: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
         async function generateOutline() {
             const topic = document.getElementById('topic').value;
             const language = document.getElementById('language').value;
+            const useWebSearch = document.getElementById('useWebSearch').checked;
 
             if (!topic) {
                 alert('请输入PPT主题或需求');
                 return;
             }
 
-            showLoading('生成大纲中...');
+            if (useWebSearch && !webSearchConfigured) {
+                alert('联网搜索未配置，请先配置搜索引擎');
+                return;
+            }
+
+            showLoading(useWebSearch ? '联网搜索并生成大纲中...' : '生成大纲中...');
 
             try {
                 const response = await fetch('/api/generate-outline', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic, language, use_llm: llmConfigured })
+                    body: JSON.stringify({ topic, language, use_llm: llmConfigured, use_web_search: useWebSearch })
                 });
 
                 if (!response.ok) throw new Error('生成大纲失败');
@@ -496,13 +849,15 @@
 
             updateOutlineFromEditor();
 
-            showLoading('生成PPT中...');
+            const useWebSearch = document.getElementById('useWebSearch').checked;
+
+            showLoading(useWebSearch ? '联网搜索并生成PPT中...' : '生成PPT中...');
 
             try {
                 const response = await fetch('/api/generate-slides', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured })
+                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch })
                 });
 
                 if (!response.ok) throw new Error('生成PPT失败');
@@ -545,13 +900,16 @@
             }
 
             updateOutlineFromEditor();
+
+            const useWebSearch = document.getElementById('useWebSearch').checked;
+
             showLoading('生成PPTX文件中...');
 
             try {
                 const response = await fetch('/api/download-pptx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured })
+                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch })
                 });
 
                 if (!response.ok) throw new Error('生成PPTX失败');
@@ -604,7 +962,7 @@
         function toggleLog() {
             const logContent = document.getElementById('logContent');
             const collapseBtn = document.querySelector('.collapse-btn');
-            
+
             if (logContent.classList.contains('collapsed')) {
                 logContent.classList.remove('collapsed');
                 collapseBtn.textContent = '折叠';
@@ -614,8 +972,70 @@
             }
         }
 
+        async function checkWebSearchStatus() {
+            try {
+                const response = await fetch('/api/web-search-status');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.is_configured) {
+                        webSearchConfigured = true;
+                        const name = data.active_provider_name || data.active_provider;
+                        document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
+                        if (data.active_provider) {
+                            currentProvider = data.active_provider;
+                            selectProvider(currentProvider);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('获取联网搜索状态失败:', error);
+            }
+        }
+
+        async function restoreConfigs() {
+            const llmConfig = JSON.parse(localStorage.getItem('llmConfig') || 'null');
+            if (llmConfig && llmConfig.api_endpoint && llmConfig.model_name) {
+                document.getElementById('apiEndpoint').value = llmConfig.api_endpoint;
+                document.getElementById('apiKey').value = llmConfig.api_key || '';
+                document.getElementById('modelName').value = llmConfig.model_name;
+                document.getElementById('isLocal').checked = llmConfig.is_local || false;
+                try {
+                    const response = await fetch('/api/configure-llm', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(llmConfig)
+                    });
+                    if (response.ok) {
+                        llmConfigured = true;
+                        document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                    }
+                } catch (e) { console.error('恢复LLM配置失败:', e); }
+            }
+
+            const webConfig = JSON.parse(localStorage.getItem('webSearchConfig') || 'null');
+            if (webConfig && webConfig.provider) {
+                currentProvider = webConfig.provider;
+                selectProvider(currentProvider);
+                try {
+                    const response = await fetch('/api/configure-web-search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(webConfig)
+                    });
+                    if (response.ok) {
+                        webSearchConfigured = true;
+                        const data = await response.json();
+                        const name = data.active_provider || webConfig.provider;
+                        document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
+                    }
+                } catch (e) { console.error('恢复联网搜索配置失败:', e); }
+            }
+        }
+
+        selectProvider('tavily');
         setInterval(refreshLogs, 5000);
         refreshLogs();
+        restoreConfigs();
     </script>
 </body>
 </html>
