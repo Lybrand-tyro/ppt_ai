@@ -439,15 +439,28 @@ class LLMService:
         }
         self.is_configured = False
 
+    @staticmethod
+    def _normalize_endpoint(endpoint: str) -> str:
+        """自动补全API端点路径"""
+        endpoint = endpoint.strip().rstrip('/')
+        if not endpoint:
+            return endpoint
+        if endpoint.endswith('/v1/chat/completions'):
+            return endpoint
+        if endpoint.endswith('/v1'):
+            return endpoint + '/chat/completions'
+        return endpoint + '/v1/chat/completions'
+
     def configure(self, api_endpoint: str, api_key: str, model_name: str, is_local: bool = False):
         """配置LLM服务
 
         Args:
-            api_endpoint: API端点（如 http://localhost:18080/v1/chat/completions）
+            api_endpoint: API端点（如 http://localhost:18080 或 http://localhost:18080/v1/chat/completions）
             api_key: API密钥
             model_name: 模型名称
             is_local: 是否为本地模型
         """
+        api_endpoint = self._normalize_endpoint(api_endpoint)
         self.config = {
             "api_endpoint": api_endpoint,
             "api_key": api_key,
@@ -457,17 +470,20 @@ class LLMService:
         self.is_configured = bool(api_endpoint)
         logger.info(f"LLM服务已配置: endpoint={api_endpoint}, model={model_name}, is_local={is_local}")
 
-    def generate_outline(self, topic: str, language: str = "zh", use_web_search: bool = False) -> Dict[str, Any]:
+    def generate_outline(self, topic: str, language: str = "zh", use_web_search: bool = False, task_id: str = "") -> Dict[str, Any]:
         """使用LLM生成PPT大纲
 
         Args:
             topic: PPT主题/用户需求
             language: 语言（zh/en）
             use_web_search: 是否使用联网搜索增强
+            task_id: 进度跟踪任务ID
 
         Returns:
             大纲数据字典
         """
+        from .progress import progress_tracker
+
         if not self.is_configured:
             logger.warning("LLM服务未配置，使用模板生成大纲")
             return self._generate_template_outline(topic, language)
@@ -476,15 +492,27 @@ class LLMService:
 
         web_context = ""
         if use_web_search and web_search_service.is_configured():
+            if task_id and progress_tracker.is_cancelled(task_id):
+                return self._generate_template_outline(topic, language)
+            progress_tracker.update(task_id, 10, "🔍 联网搜索参考资料...", "web_search_outline")
             logger.info("联网搜索增强大纲生成...")
             web_context = web_search_service.search_for_content(topic, topic, language)
             if web_context:
                 logger.info(f"联网搜索获取到上下文: {len(web_context)} 字符")
+                progress_tracker.update(task_id, 25, f"✅ 搜索完成，获取到 {len(web_context)} 字符资料", "web_search_done")
 
+        if task_id and progress_tracker.is_cancelled(task_id):
+            return self._generate_template_outline(topic, language)
+
+        progress_tracker.update(task_id, 30, "📝 构建提示词，请求LLM生成大纲...", "llm_request_outline")
         prompt = self._build_outline_prompt(topic, language, web_context)
 
         try:
-            response = self._call_llm(prompt)
+            progress_tracker.update(task_id, 40, "⏳ 等待LLM响应（生成大纲）...", "llm_waiting_outline")
+            response = self._call_llm(prompt, task_id)
+            if task_id and progress_tracker.is_cancelled(task_id):
+                return self._generate_template_outline(topic, language)
+            progress_tracker.update(task_id, 80, "📋 解析LLM返回的大纲...", "parse_outline")
             outline = self._parse_outline_response(response)
             logger.info(f"LLM生成大纲成功: {len(outline.get('slides', []))} 张幻灯片")
             return outline
@@ -493,7 +521,7 @@ class LLMService:
             logger.info("回退到模板生成大纲")
             return self._generate_template_outline(topic, language)
 
-    def generate_content(self, slide_title: str, slide_type: str, topic: str, language: str = "zh", use_web_search: bool = False) -> str:
+    def generate_content(self, slide_title: str, slide_type: str, topic: str, language: str = "zh", use_web_search: bool = False, task_id: str = "") -> str:
         """使用LLM生成幻灯片内容
 
         Args:
@@ -502,10 +530,13 @@ class LLMService:
             topic: PPT主题
             language: 语言
             use_web_search: 是否使用联网搜索增强
+            task_id: 进度跟踪任务ID
 
         Returns:
             生成的内容文本
         """
+        from .progress import progress_tracker
+
         if not self.is_configured:
             logger.warning("LLM服务未配置，使用模板生成内容")
             return self._generate_template_content(slide_title, topic)
@@ -514,15 +545,23 @@ class LLMService:
 
         web_context = ""
         if use_web_search and web_search_service.is_configured():
+            if task_id and progress_tracker.is_cancelled(task_id):
+                return self._generate_template_content(slide_title, topic)
+            progress_tracker.update(task_id, -1, f"🔍 搜索「{slide_title}」相关资料...", f"web_search_{slide_title}")
             logger.info(f"联网搜索增强内容生成: {slide_title}")
             web_context = web_search_service.search_for_content(slide_title, topic, language)
             if web_context:
                 logger.info(f"联网搜索获取到上下文: {len(web_context)} 字符")
 
+        if task_id and progress_tracker.is_cancelled(task_id):
+            return self._generate_template_content(slide_title, topic)
+
         prompt = self._build_content_prompt(slide_title, slide_type, topic, language, web_context)
 
         try:
-            response = self._call_llm(prompt)
+            response = self._call_llm(prompt, task_id)
+            if task_id and progress_tracker.is_cancelled(task_id):
+                return self._generate_template_content(slide_title, topic)
             content = self._parse_content_response(response)
             logger.info(f"LLM生成内容成功: {len(content)} 字符")
             return content
@@ -560,15 +599,34 @@ class LLMService:
 4. 确保JSON格式完全正确，可直接解析
 {"5. 结合联网搜索资料，使内容更加丰富、准确、有深度" if web_context else ""}
 
+**样式设计要求：**
+每张幻灯片需要包含style字段，用于指导视觉呈现：
+- layout: 布局方式
+  - "centered" = 内容居中展示，适合要点少、强调冲击力的页面
+  - "left" = 左对齐常规布局，适合要点较多的页面
+  - "two-column" = 双栏布局，适合对比或分类内容
+  - "quote" = 大字引用布局，适合核心观点/金句
+  - "cards" = 卡片式布局，适合并列的3-4个模块
+  - "timeline" = 时间线布局，适合发展历程/步骤流程
+- accent_color: 该页强调色（十六进制），根据内容主题选择，如科技用蓝色#3498DB、环保用绿色#27AE60、警示用红色#E74C3C等
+- icon: 代表该页主题的emoji图标，如🤖🚀💡📊🔬🌍等
+- content_style: 内容呈现形式
+  - "bullet" = 常规要点列表
+  - "numbered" = 编号列表，适合步骤/排名
+  - "highlight" = 突出关键词，适合核心概念
+
 请按照以下JSON格式返回PPT大纲：
 {{
     "title": "PPT标题",
     "slides": [
-        {{"id": 1, "type": "title", "title": "标题", "subtitle": "副标题", "content": ""}},
-        {{"id": 2, "type": "agenda", "title": "目录", "subtitle": "", "content": "目录内容"}},
-        {{"id": 3, "type": "content", "title": "第一部分标题", "subtitle": "", "content": "内容要点"}},
+        {{"id": 1, "type": "title", "title": "标题", "subtitle": "副标题", "content": "", "style": {{"layout": "centered", "accent_color": "#3498DB", "icon": "🚀"}}}},
+        {{"id": 2, "type": "agenda", "title": "目录", "subtitle": "", "content": "目录内容", "style": {{"layout": "left", "accent_color": "#3498DB", "icon": "📋"}}}},
+        {{"id": 3, "type": "content", "title": "第一部分标题", "subtitle": "", "content": "内容要点", "style": {{"layout": "left", "accent_color": "#3498DB", "icon": "💡", "content_style": "bullet"}}}},
+        {{"id": 4, "type": "content", "title": "发展历程", "subtitle": "", "content": "历程内容", "style": {{"layout": "timeline", "accent_color": "#E67E22", "icon": "📅", "content_style": "numbered"}}}},
+        {{"id": 5, "type": "content", "title": "核心观点", "subtitle": "", "content": "观点内容", "style": {{"layout": "quote", "accent_color": "#9B59B6", "icon": "💬", "content_style": "highlight"}}}},
+        {{"id": 6, "type": "content", "title": "分类对比", "subtitle": "", "content": "对比内容", "style": {{"layout": "two-column", "accent_color": "#27AE60", "icon": "⚖️", "content_style": "bullet"}}}},
         ...更多内容幻灯片...
-        {{"id": N, "type": "thankyou", "title": "谢谢", "subtitle": "感谢语", "content": ""}}
+        {{"id": N, "type": "thankyou", "title": "谢谢", "subtitle": "感谢语", "content": "", "style": {{"layout": "centered", "accent_color": "#3498DB", "icon": "🙏"}}}}
     ],
     "metadata": {{"language": "{language}", "total_slides": N}}
 }}"""
@@ -584,15 +642,33 @@ User requirements: {topic}
 4. Ensure the JSON format is completely correct and directly parseable
 {"5. Incorporate web search information to make the content richer, more accurate, and more in-depth" if web_context else ""}
 
+**Style Design Requirements:**
+Each slide must include a "style" field to guide visual presentation:
+- layout: layout type
+  - "centered" = centered content, ideal for impact with few points
+  - "left" = standard left-aligned layout, ideal for many points
+  - "two-column" = two-column layout, ideal for comparisons
+  - "quote" = large quote layout, ideal for key insights/mottos
+  - "cards" = card-style layout, ideal for 3-4 parallel modules
+  - "timeline" = timeline layout, ideal for history/steps
+- accent_color: page accent color (hex), choose based on content theme
+- icon: emoji representing the slide topic
+- content_style: content presentation form
+  - "bullet" = standard bullet list
+  - "numbered" = numbered list, ideal for steps/rankings
+  - "highlight" = highlighted keywords, ideal for core concepts
+
 Please return the PPT outline in the following JSON format:
 {{
     "title": "PPT Title",
     "slides": [
-        {{"id": 1, "type": "title", "title": "Title", "subtitle": "Subtitle", "content": ""}},
-        {{"id": 2, "type": "agenda", "title": "Agenda", "subtitle": "", "content": "Agenda content"}},
-        {{"id": 3, "type": "content", "title": "Section 1 Title", "subtitle": "", "content": "Content points"}},
+        {{"id": 1, "type": "title", "title": "Title", "subtitle": "Subtitle", "content": "", "style": {{"layout": "centered", "accent_color": "#3498DB", "icon": "🚀"}}}},
+        {{"id": 2, "type": "agenda", "title": "Agenda", "subtitle": "", "content": "Agenda content", "style": {{"layout": "left", "accent_color": "#3498DB", "icon": "📋"}}}},
+        {{"id": 3, "type": "content", "title": "Section 1", "subtitle": "", "content": "Content", "style": {{"layout": "left", "accent_color": "#3498DB", "icon": "💡", "content_style": "bullet"}}}},
+        {{"id": 4, "type": "content", "title": "History", "subtitle": "", "content": "History content", "style": {{"layout": "timeline", "accent_color": "#E67E22", "icon": "📅", "content_style": "numbered"}}}},
+        {{"id": 5, "type": "content", "title": "Key Insight", "subtitle": "", "content": "Insight content", "style": {{"layout": "quote", "accent_color": "#9B59B6", "icon": "💬", "content_style": "highlight"}}}},
         ...more content slides...
-        {{"id": N, "type": "thankyou", "title": "Thank You", "subtitle": "Thank you message", "content": ""}}
+        {{"id": N, "type": "thankyou", "title": "Thank You", "subtitle": "Thank you message", "content": "", "style": {{"layout": "centered", "accent_color": "#3498DB", "icon": "🙏"}}}}
     ],
     "metadata": {{"language": "{language}", "total_slides": N}}
 }}"""
@@ -622,10 +698,15 @@ PPT主题：{topic}
 {web_context_section}
 **重要要求：**
 1. 直接生成最终结果，不要包含任何思考过程、草稿或中间步骤
-2. 只返回bullet point格式的内容，不要其他文字
+2. 只返回内容文本，不要其他文字
 3. 内容要专业、有深度、符合演示场景
-4. 生成3-5个具体的要点内容，使用简洁的bullet point格式（每个要点以"• "开头）
-{"5. 结合联网搜索资料，使内容更加丰富、准确、有深度，包含真实数据和案例" if web_context else ""}"""
+4. 生成3-5个具体的要点内容
+5. 格式要求：
+   - bullet样式：每个要点以"• "开头
+   - numbered样式：每个要点以"1. ""2. ""3. "开头
+   - highlight样式：每个要点用**加粗**标记关键词，格式为"• **关键词** 解释说明"
+6. 如果要点中有特别重要的数据或结论，用**加粗**标记
+{"7. 结合联网搜索资料，使内容更加丰富、准确、有深度，包含真实数据和案例" if web_context else ""}"""
         else:
             return f"""Please generate detailed content for the following slide:
 Slide Title: {slide_title}
@@ -634,20 +715,27 @@ PPT Topic: {topic}
 {web_context_section}
 **Important Requirements:**
 1. Generate the final result directly, no thinking process, draft, or intermediate steps
-2. Only return bullet point content, no other text
+2. Only return content text, no other text
 3. Content should be professional, in-depth, and appropriate for the presentation scenario
-4. Please generate 3-5 specific content points in a concise bullet point format (each point starts with "• ")
-{"5. Incorporate web search information to make the content richer, more accurate, and more in-depth, including real data and cases" if web_context else ""}"""
+4. Please generate 3-5 specific content points
+5. Format requirements:
+   - bullet style: each point starts with "• "
+   - numbered style: each point starts with "1. " "2. " "3. "
+   - highlight style: mark key terms with **bold**, format as "• **Key Term** explanation"
+6. If any point contains important data or conclusions, mark them with **bold**
+{"7. Incorporate web search information to make the content richer, more accurate, and more in-depth, including real data and cases" if web_context else ""}"""
 
-    def _call_llm(self, prompt: str) -> str:
-        """调用LLM API
+    def _call_llm(self, prompt: str, task_id: str = "") -> str:
+        """调用LLM API（含重试机制和取消检查）
 
         Args:
             prompt: 提示词
+            task_id: 进度跟踪任务ID
 
         Returns:
             LLM返回的文本
         """
+        from .progress import progress_tracker
         logger.debug(f"调用LLM API: endpoint={self.config['api_endpoint']}")
 
         headers = {
@@ -661,35 +749,69 @@ PPT Topic: {topic}
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.7
+            "temperature": 0.7,
+            "max_tokens": 4096
         }
 
         if self.config["is_local"]:
             payload["stream"] = False
 
-        try:
-            response = requests.post(
-                self.config["api_endpoint"],
-                headers=headers,
-                json=payload,
-                timeout=120
-            )
-            response.raise_for_status()
-            result = response.json()
+        max_retries = 3
+        timeout = 180
 
-            if "choices" in result and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
-            elif "content" in result:
-                return result["content"]
-            else:
-                raise ValueError(f"Unexpected response format: {result}")
+        for attempt in range(max_retries):
+            try:
+                if task_id and progress_tracker.is_cancelled(task_id):
+                    raise InterruptedError("任务已取消")
+                logger.info(f"LLM API调用 (尝试 {attempt + 1}/{max_retries}, 超时={timeout}s)")
+                response = requests.post(
+                    self.config["api_endpoint"],
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout
+                )
 
-        except requests.exceptions.Timeout:
-            logger.error("LLM API调用超时")
-            raise TimeoutError("LLM API调用超时")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"LLM API调用失败: {e}")
-            raise
+                if response.status_code == 401:
+                    logger.error("LLM API认证失败(401)：API密钥无效或已过期，请检查API Key")
+                    raise PermissionError("API密钥无效或已过期，请检查LLM配置中的API Key")
+                if response.status_code == 403:
+                    logger.error("LLM API访问被拒绝(403)：无权限访问该模型")
+                    raise PermissionError("无权限访问该模型，请检查API Key权限")
+                if response.status_code == 404:
+                    logger.error(f"LLM API端点不存在(404)：请检查端点地址和模型名称")
+                    raise ValueError(f"API端点或模型不存在，请检查端点地址和模型名称是否正确")
+
+                response.raise_for_status()
+                result = response.json()
+
+                if "choices" in result and len(result["choices"]) > 0:
+                    return result["choices"][0]["message"]["content"]
+                elif "content" in result:
+                    return result["content"]
+                else:
+                    raise ValueError(f"Unexpected response format: {result}")
+
+            except (PermissionError, ValueError):
+                raise
+            except requests.exceptions.Timeout:
+                logger.warning(f"LLM API调用超时 (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    timeout += 60
+                    logger.info(f"增加超时到 {timeout}s 后重试...")
+                    continue
+                logger.error("LLM API调用超时，已达最大重试次数")
+                raise TimeoutError(
+                    f"LLM API调用超时（已重试{max_retries}次）。"
+                    "可能原因：1)本地模型服务卡住，请重启llama.cpp；"
+                    "2)模型推理速度慢，可尝试更小的模型；"
+                    "3)网络问题，请检查API端点是否可达"
+                )
+            except requests.exceptions.RequestException as e:
+                logger.error(f"LLM API调用失败: {e}")
+                if attempt < max_retries - 1 and "ConnectionError" in type(e).__name__:
+                    logger.info("连接错误，重试中...")
+                    continue
+                raise
 
     def _parse_outline_response(self, response: str) -> Dict[str, Any]:
         """解析大纲响应"""

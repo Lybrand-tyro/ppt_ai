@@ -334,18 +334,53 @@
             justify-content: center;
             align-items: center;
             z-index: 1000;
+            flex-direction: column;
         }
         .loading.show {
             display: flex;
         }
         .loading p {
             color: white;
-            font-size: 1.5em;
-            animation: pulse 1.5s infinite;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            text-align: center;
+            max-width: 500px;
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+        .progress-bar-container {
+            width: 450px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            height: 16px;
+            position: relative;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #48bb78, #667eea);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        .progress-percent {
+            color: rgba(255,255,255,0.8);
+            font-size: 0.85em;
+            margin-top: 6px;
+            text-align: center;
+        }
+        .cancel-btn {
+            margin-top: 15px;
+            padding: 8px 24px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .cancel-btn:hover {
+            background: #c0392b;
         }
         .outline-editor {
             border: 2px solid #667eea;
@@ -500,9 +535,16 @@
 
             <div class="llm-config">
                 <h3>LLM配置</h3>
+                <div id="llmHistorySection" style="display:none; margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:0.85em; font-weight:bold; color:#667eea;">📋 历史配置</span>
+                        <button class="btn btn-sm" style="padding:3px 10px; font-size:0.75em; background:#e0e0e0; color:#555;" onclick="toggleLlmHistory()">收起</button>
+                    </div>
+                    <div id="llmHistoryList" style="max-height:150px; overflow-y:auto;"></div>
+                </div>
                 <div class="form-group">
                     <label for="apiEndpoint">API端点</label>
-                    <input type="text" id="apiEndpoint" placeholder="http://localhost:18080/v1/chat/completions">
+                    <input type="text" id="apiEndpoint" placeholder="http://localhost:18080 （自动补全 /v1/chat/completions）">
                 </div>
                 <div class="form-group">
                     <label for="apiKey">API密钥</label>
@@ -561,7 +603,12 @@
     </div>
 
     <div class="loading" id="loading">
-        <p>处理中，请稍候...</p>
+        <p id="loadingMessage">处理中，请稍候...</p>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-percent" id="progressPercent"></div>
+        <button class="cancel-btn" id="cancelBtn" onclick="cancelCurrentTask()">取消</button>
     </div>
 
     <script>
@@ -569,6 +616,9 @@
         let llmConfigured = false;
         let webSearchConfigured = false;
         let currentProvider = 'tavily';
+        let currentTaskId = '';
+        let progressEventSource = null;
+        let currentAbortController = null;
 
         const providerForms = {
             tavily: `
@@ -686,6 +736,7 @@
                     llmConfigured = true;
                     document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
                     localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: apiEndpoint, api_key: apiKey, model_name: modelName, is_local: isLocal }));
+                    loadLlmHistory();
                     alert('LLM配置成功！');
                 } else {
                     alert('LLM配置失败');
@@ -760,22 +811,33 @@
                 return;
             }
 
+            const taskId = await createTask();
+            currentAbortController = new AbortController();
             showLoading(useWebSearch ? '联网搜索并生成大纲中...' : '生成大纲中...');
+            startProgressTracking(taskId);
 
             try {
                 const response = await fetch('/api/generate-outline', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic, language, use_llm: llmConfigured, use_web_search: useWebSearch })
+                    body: JSON.stringify({ topic, language, use_llm: llmConfigured, use_web_search: useWebSearch, task_id: taskId }),
+                    signal: currentAbortController.signal
                 });
 
-                if (!response.ok) throw new Error('生成大纲失败');
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.detail || '生成大纲失败');
+                }
 
                 currentOutline = await response.json();
                 displayOutline(currentOutline);
                 refreshLogs();
             } catch (error) {
-                alert('错误: ' + error.message);
+                if (error.name === 'AbortError') {
+                    console.log('大纲生成已取消');
+                } else {
+                    alert('错误: ' + error.message);
+                }
             } finally {
                 hideLoading();
             }
@@ -850,23 +912,33 @@
             updateOutlineFromEditor();
 
             const useWebSearch = document.getElementById('useWebSearch').checked;
-
+            const taskId = await createTask();
+            currentAbortController = new AbortController();
             showLoading(useWebSearch ? '联网搜索并生成PPT中...' : '生成PPT中...');
+            startProgressTracking(taskId);
 
             try {
                 const response = await fetch('/api/generate-slides', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch })
+                    body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch, task_id: taskId }),
+                    signal: currentAbortController.signal
                 });
 
-                if (!response.ok) throw new Error('生成PPT失败');
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.detail || '生成PPT失败');
+                }
 
                 const result = await response.json();
                 displayPPT(result.slides_html);
                 refreshLogs();
             } catch (error) {
-                alert('错误: ' + error.message);
+                if (error.name === 'AbortError') {
+                    console.log('PPT生成已取消');
+                } else {
+                    alert('错误: ' + error.message);
+                }
             } finally {
                 hideLoading();
             }
@@ -912,7 +984,10 @@
                     body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch })
                 });
 
-                if (!response.ok) throw new Error('生成PPTX失败');
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => '');
+                    throw new Error(errText || '生成PPTX失败');
+                }
 
                 const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
@@ -944,12 +1019,73 @@
 
         function showLoading(message) {
             const loading = document.getElementById('loading');
-            loading.querySelector('p').textContent = message;
+            document.getElementById('loadingMessage').textContent = message;
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressPercent').textContent = '';
             loading.classList.add('show');
         }
 
         function hideLoading() {
             document.getElementById('loading').classList.remove('show');
+            stopProgressTracking();
+        }
+
+        function startProgressTracking(taskId) {
+            currentTaskId = taskId;
+            stopProgressTracking();
+            progressEventSource = new EventSource(`/api/progress/${taskId}`);
+            progressEventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const msg = data.message || '处理中...';
+                    document.getElementById('loadingMessage').textContent = msg;
+                    if (data.progress > 0) {
+                        document.getElementById('progressBar').style.width = data.progress + '%';
+                        document.getElementById('progressPercent').textContent = data.progress + '%';
+                    }
+                    if (data.status === 'completed') {
+                        document.getElementById('progressBar').style.width = '100%';
+                        document.getElementById('progressPercent').textContent = '100%';
+                        stopProgressTracking();
+                    } else if (data.status === 'failed' || data.status === 'cancelled') {
+                        stopProgressTracking();
+                    }
+                } catch (e) { console.error('Progress parse error:', e); }
+            };
+            progressEventSource.onerror = function() {
+                stopProgressTracking();
+            };
+        }
+
+        function stopProgressTracking() {
+            if (progressEventSource) {
+                progressEventSource.close();
+                progressEventSource = null;
+            }
+        }
+
+        async function cancelCurrentTask() {
+            if (currentTaskId) {
+                try {
+                    await fetch(`/api/cancel/${currentTaskId}`, { method: 'POST' });
+                } catch (e) { console.error('Cancel error:', e); }
+            }
+            if (currentAbortController) {
+                currentAbortController.abort();
+                currentAbortController = null;
+            }
+            hideLoading();
+        }
+
+        async function createTask() {
+            try {
+                const r = await fetch('/api/create-task', { method: 'POST' });
+                if (r.ok) {
+                    const data = await r.json();
+                    return data.task_id;
+                }
+            } catch (e) { console.error('Create task error:', e); }
+            return '';
         }
 
         function clearForm() {
@@ -990,6 +1126,84 @@
             } catch (error) {
                 console.error('获取联网搜索状态失败:', error);
             }
+        }
+
+        async function loadLlmHistory() {
+            try {
+                const response = await fetch('/api/llm-history');
+                if (!response.ok) return;
+                const data = await response.json();
+                const history = data.history || [];
+                const section = document.getElementById('llmHistorySection');
+                const list = document.getElementById('llmHistoryList');
+
+                if (history.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+
+                section.style.display = 'block';
+                list.innerHTML = '';
+                history.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 10px; margin-bottom:4px; background:#f0f4ff; border-radius:6px; cursor:pointer; font-size:0.82em; transition:background 0.2s;';
+                    div.onmouseenter = () => div.style.background = '#e0e8fa';
+                    div.onmouseleave = () => div.style.background = '#f0f4ff';
+                    div.innerHTML = `
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:bold; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.model_name}</div>
+                            <div style="color:#888; font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.api_endpoint}</div>
+                        </div>
+                        <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
+                            ${item.is_local ? '<span style="color:#e67e22; font-size:0.85em;">本地</span>' : ''}
+                            <span style="color:#aaa; font-size:0.85em;">${item.saved_at || ''}</span>
+                            <button onclick="event.stopPropagation(); applyLlmHistory(${index})" style="padding:2px 8px; border:none; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
+                        </div>
+                    `;
+                    div.onclick = () => applyLlmHistory(index);
+                    list.appendChild(div);
+                });
+            } catch (e) {
+                console.error('加载LLM历史失败:', e);
+            }
+        }
+
+        async function applyLlmHistory(index) {
+            showLoading('应用历史配置...');
+            try {
+                const response = await fetch('/api/llm-history-apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index })
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const config = data.config;
+                    document.getElementById('apiEndpoint').value = config.api_endpoint;
+                    document.getElementById('modelName').value = config.model_name;
+                    document.getElementById('isLocal').checked = config.is_local;
+                    llmConfigured = true;
+                    document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                    localStorage.setItem('llmConfig', JSON.stringify({
+                        api_endpoint: config.api_endpoint,
+                        api_key: '',
+                        model_name: config.model_name,
+                        is_local: config.is_local
+                    }));
+                    alert('已应用历史配置: ' + config.model_name);
+                } else {
+                    alert('应用历史配置失败');
+                }
+            } catch (e) {
+                alert('应用失败: ' + e.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function toggleLlmHistory() {
+            const section = document.getElementById('llmHistorySection');
+            section.style.display = section.style.display === 'none' ? 'block' : 'none';
         }
 
         async function restoreConfigs() {
@@ -1036,6 +1250,7 @@
         setInterval(refreshLogs, 5000);
         refreshLogs();
         restoreConfigs();
+        loadLlmHistory();
     </script>
 </body>
 </html>

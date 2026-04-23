@@ -13,6 +13,8 @@ from typing import Dict, Any, Optional
 import sys
 import os
 import io
+import json
+from datetime import datetime
 from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -20,6 +22,43 @@ sys.path.insert(0, os.path.dirname(__file__))
 from .llm_service import llm_service, web_search_service
 from .ppt_service import ppt_service
 from .logger import logger
+from .progress import progress_tracker
+
+LLM_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_history.json")
+
+def _load_llm_history() -> list:
+    if os.path.exists(LLM_HISTORY_FILE):
+        try:
+            with open(LLM_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def _save_llm_history(history: list):
+    with open(LLM_HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+def _add_llm_history(api_endpoint: str, api_key: str, model_name: str, is_local: bool):
+    history = _load_llm_history()
+    masked_key = (api_key[:4] + "***" + api_key[-4:]) if len(api_key) > 8 else ("***" if api_key else "")
+    entry = {
+        "api_endpoint": api_endpoint,
+        "api_key_masked": masked_key,
+        "api_key": api_key,
+        "model_name": model_name,
+        "is_local": is_local,
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    for i, item in enumerate(history):
+        if item.get("api_endpoint") == api_endpoint and item.get("model_name") == model_name:
+            history[i] = entry
+            _save_llm_history(history)
+            return
+    history.insert(0, entry)
+    if len(history) > 20:
+        history = history[:20]
+    _save_llm_history(history)
 
 app = FastAPI(title="PPT AI", description="AI驱动的PPT生成器")
 
@@ -51,6 +90,12 @@ async def configure_llm(config: LLMConfig):
             model_name=config.model_name,
             is_local=config.is_local
         )
+        _add_llm_history(
+            api_endpoint=llm_service.config["api_endpoint"],
+            api_key=config.api_key,
+            model_name=config.model_name,
+            is_local=config.is_local
+        )
         return {"status": "success", "message": "LLM配置成功"}
     except Exception as e:
         logger.error(f"LLM配置失败: {e}")
@@ -66,6 +111,47 @@ async def get_llm_status():
             "is_local": llm_service.config.get("is_local", False)
         } if llm_service.is_configured else None
     }
+
+@app.get("/api/llm-history")
+async def get_llm_history():
+    history = _load_llm_history()
+    safe_history = []
+    for item in history:
+        safe_history.append({
+            "api_endpoint": item.get("api_endpoint", ""),
+            "api_key_masked": item.get("api_key_masked", ""),
+            "model_name": item.get("model_name", ""),
+            "is_local": item.get("is_local", False),
+            "saved_at": item.get("saved_at", "")
+        })
+    return {"history": safe_history}
+
+@app.post("/api/llm-history-apply")
+async def apply_llm_history(data: dict = Body(...)):
+    index = data.get("index", -1)
+    history = _load_llm_history()
+    if index < 0 or index >= len(history):
+        raise HTTPException(status_code=400, detail="无效的历史配置索引")
+    entry = history[index]
+    try:
+        llm_service.configure(
+            api_endpoint=entry["api_endpoint"],
+            api_key=entry.get("api_key", ""),
+            model_name=entry["model_name"],
+            is_local=entry.get("is_local", False)
+        )
+        return {
+            "status": "success",
+            "message": "历史配置已应用",
+            "config": {
+                "api_endpoint": entry["api_endpoint"],
+                "api_key_masked": entry.get("api_key_masked", ""),
+                "model_name": entry["model_name"],
+                "is_local": entry.get("is_local", False)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"应用配置失败: {str(e)}")
 
 @app.post("/api/configure-web-search")
 async def configure_web_search(data: dict = Body(...)):
@@ -126,6 +212,35 @@ async def web_search(data: dict = Body(...)):
         logger.error(f"联网搜索失败: {e}")
         raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
 
+@app.get("/api/progress/{task_id}")
+async def get_progress(task_id: str):
+    """SSE端点：实时推送任务进度"""
+    import asyncio
+
+    async def event_generator():
+        last_progress = -1
+        while True:
+            status = progress_tracker.get_status(task_id)
+            if status["progress"] != last_progress or status["status"] in ("completed", "failed", "cancelled"):
+                last_progress = status["progress"]
+                yield f"data: {json.dumps(status, ensure_ascii=False)}\n\n"
+            if status["status"] in ("completed", "failed", "cancelled", "not_found"):
+                progress_tracker.cleanup(task_id)
+                break
+            await asyncio.sleep(0.3)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/cancel/{task_id}")
+async def cancel_task(task_id: str):
+    progress_tracker.cancel(task_id)
+    return {"status": "cancelled", "task_id": task_id}
+
+@app.post("/api/create-task")
+async def create_task():
+    task_id = progress_tracker.create_task()
+    return {"task_id": task_id}
+
 @app.post("/api/generate-outline")
 async def generate_outline(data: dict = Body(...)):
     topic = data.get("topic")
@@ -133,8 +248,9 @@ async def generate_outline(data: dict = Body(...)):
     language = data.get("language", "zh")
     use_llm = data.get("use_llm", False)
     use_web_search = data.get("use_web_search", False)
+    task_id = data.get("task_id", "")
 
-    logger.info(f"收到大纲生成请求: topic={topic}, scenario={scenario}, language={language}, use_llm={use_llm}, use_web_search={use_web_search}")
+    logger.info(f"收到大纲生成请求: topic={topic}, use_llm={use_llm}, use_web_search={use_web_search}, task_id={task_id}")
 
     if not topic:
         raise HTTPException(status_code=400, detail="topic不能为空")
@@ -142,13 +258,20 @@ async def generate_outline(data: dict = Body(...)):
     try:
         if use_llm and llm_service.is_configured:
             logger.info("使用LLM生成大纲")
-            outline = llm_service.generate_outline(topic, language, use_web_search=use_web_search)
+            import asyncio
+            outline = await asyncio.to_thread(llm_service.generate_outline, topic, language, use_web_search, task_id)
         else:
+            progress_tracker.update(task_id, 5, "📋 使用模板生成大纲...", "template_outline")
             logger.info("使用模板生成大纲")
             outline = llm_service._generate_template_outline(topic, language)
+        progress_tracker.complete(task_id, "✅ 大纲生成完成")
         logger.info(f"大纲生成成功: {len(outline.get('slides', []))} 张幻灯片")
         return outline
+    except InterruptedError:
+        progress_tracker.cancel(task_id)
+        raise HTTPException(status_code=499, detail="任务已取消")
     except Exception as e:
+        progress_tracker.fail(task_id, f"❌ 大纲生成失败: {e}")
         logger.error(f"大纲生成失败: {e}")
         raise HTTPException(status_code=500, detail=f"生成大纲失败: {str(e)}")
 
@@ -158,17 +281,25 @@ async def generate_slides(data: dict = Body(...)):
     scenario = data.get("scenario", "general")
     use_llm = data.get("use_llm", False)
     use_web_search = data.get("use_web_search", False)
+    task_id = data.get("task_id", "")
 
-    logger.info(f"收到幻灯片生成请求: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
+    logger.info(f"收到幻灯片生成请求: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}, task_id={task_id}")
 
     if not outline:
         raise HTTPException(status_code=400, detail="outline不能为空")
 
     try:
-        slides_html = await ppt_service.generate_html(outline, scenario, use_llm, use_web_search)
+        progress_tracker.update(task_id, 5, "🚀 开始生成PPT...", "start_slides")
+        import asyncio
+        slides_html = await ppt_service.generate_html(outline, scenario, use_llm, use_web_search, task_id)
+        progress_tracker.complete(task_id, "✅ PPT生成完成")
         logger.info(f"幻灯片生成成功: {len(slides_html)} 字符")
         return {"slides_html": slides_html}
+    except InterruptedError:
+        progress_tracker.cancel(task_id)
+        raise HTTPException(status_code=499, detail="任务已取消")
     except Exception as e:
+        progress_tracker.fail(task_id, f"❌ PPT生成失败: {e}")
         logger.error(f"幻灯片生成失败: {e}")
         raise HTTPException(status_code=500, detail=f"生成幻灯片失败: {str(e)}")
 
