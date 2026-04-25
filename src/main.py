@@ -25,6 +25,7 @@ from .logger import logger
 from .progress import progress_tracker
 
 LLM_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_history.json")
+WEB_SEARCH_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_search_history.json")
 
 def _load_llm_history() -> list:
     if os.path.exists(LLM_HISTORY_FILE):
@@ -59,6 +60,39 @@ def _add_llm_history(api_endpoint: str, api_key: str, model_name: str, is_local:
     if len(history) > 20:
         history = history[:20]
     _save_llm_history(history)
+
+def _load_web_search_history() -> list:
+    if os.path.exists(WEB_SEARCH_HISTORY_FILE):
+        try:
+            with open(WEB_SEARCH_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def _save_web_search_history(history: list):
+    with open(WEB_SEARCH_HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+def _add_web_search_history(provider: str, api_key: str = "", cx: str = ""):
+    history = _load_web_search_history()
+    masked_key = (api_key[:4] + "***" + api_key[-4:]) if len(api_key) > 8 else ("***" if api_key else "")
+    entry = {
+        "provider": provider,
+        "api_key_masked": masked_key,
+        "api_key": api_key,
+        "cx": cx,
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    for i, item in enumerate(history):
+        if item.get("provider") == provider:
+            history[i] = entry
+            _save_web_search_history(history)
+            return
+    history.insert(0, entry)
+    if len(history) > 20:
+        history = history[:20]
+    _save_web_search_history(history)
 
 app = FastAPI(title="PPT AI", description="AI驱动的PPT生成器")
 
@@ -174,6 +208,8 @@ async def configure_web_search(data: dict = Body(...)):
         else:
             raise HTTPException(status_code=400, detail=f"不支持的搜索引擎: {provider}")
 
+        _add_web_search_history(provider, api_key=api_key, cx=cx if provider == "google" else "")
+
         return {
             "status": "success",
             "message": f"{web_search_service.get_active_provider_name()}联网搜索配置成功",
@@ -193,6 +229,46 @@ async def get_web_search_status():
         "active_provider_name": web_search_service.get_active_provider_name(),
         "providers": web_search_service.get_provider_status()
     }
+
+@app.get("/api/web-search-history")
+async def get_web_search_history():
+    history = _load_web_search_history()
+    safe_history = []
+    for item in history:
+        safe_history.append({
+            "provider": item.get("provider", ""),
+            "api_key_masked": item.get("api_key_masked", ""),
+            "cx": item.get("cx", ""),
+            "saved_at": item.get("saved_at", "")
+        })
+    return {"history": safe_history}
+
+@app.post("/api/web-search-history-apply")
+async def apply_web_search_history(data: dict = Body(...)):
+    index = data.get("index", -1)
+    history = _load_web_search_history()
+    if index < 0 or index >= len(history):
+        raise HTTPException(status_code=400, detail="无效的历史配置索引")
+    entry = history[index]
+    provider = entry.get("provider", "")
+    api_key = entry.get("api_key", "")
+    cx = entry.get("cx", "")
+    try:
+        if provider == "google":
+            web_search_service.configure_provider(provider, api_key=api_key, cx=cx)
+        else:
+            web_search_service.configure_provider(provider, api_key=api_key)
+        return {
+            "status": "success",
+            "message": f"{web_search_service.get_active_provider_name()}历史配置已应用",
+            "config": {
+                "provider": provider,
+                "api_key_masked": entry.get("api_key_masked", ""),
+                "cx": cx
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"应用配置失败: {str(e)}")
 
 @app.post("/api/web-search")
 async def web_search(data: dict = Body(...)):

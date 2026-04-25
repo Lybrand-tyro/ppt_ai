@@ -516,6 +516,13 @@
                         <div class="provider-config-form" id="providerConfigForm">
                         </div>
 
+                        <div id="webSearchHistorySection" style="display:none; margin-bottom:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-size:0.85em; font-weight:bold; color:#4c6ef5;">📋 历史配置</span>
+                            </div>
+                            <div id="webSearchHistoryList" style="max-height:120px; overflow-y:auto;"></div>
+                        </div>
+
                         <div class="btn-group">
                             <button class="btn btn-primary btn-sm" onclick="configureWebSearch()">保存配置</button>
                             <span id="webSearchStatus">
@@ -784,6 +791,7 @@
                     const name = data.active_provider || currentProvider;
                     document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
                     localStorage.setItem('webSearchConfig', JSON.stringify(payload));
+                    loadWebSearchHistory();
                     alert(`${name} 联网搜索配置成功！现在可以开启联网搜索增强功能。`);
                 } else {
                     const err = await response.json();
@@ -1206,6 +1214,72 @@
             section.style.display = section.style.display === 'none' ? 'block' : 'none';
         }
 
+        async function loadWebSearchHistory() {
+            try {
+                const response = await fetch('/api/web-search-history');
+                if (!response.ok) return;
+                const data = await response.json();
+                const history = data.history || [];
+                const section = document.getElementById('webSearchHistorySection');
+                const list = document.getElementById('webSearchHistoryList');
+
+                if (history.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+
+                section.style.display = 'block';
+                list.innerHTML = '';
+                history.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:5px 10px; margin-bottom:3px; background:#e8edfa; border-radius:6px; cursor:pointer; font-size:0.82em; transition:background 0.2s;';
+                    div.onmouseenter = () => div.style.background = '#d5ddf0';
+                    div.onmouseleave = () => div.style.background = '#e8edfa';
+                    const providerNames = {tavily:'Tavily',serpapi:'SerpAPI',bing:'Bing',google:'Google',brave:'Brave'};
+                    const pName = providerNames[item.provider] || item.provider;
+                    div.innerHTML = `
+                        <div style="flex:1; min-width:0;">
+                            <span style="font-weight:bold; color:#333;">${pName}</span>
+                            <span style="color:#888; margin-left:6px;">${item.api_key_masked || ''}</span>
+                        </div>
+                        <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
+                            <span style="color:#aaa; font-size:0.85em;">${item.saved_at || ''}</span>
+                            <button onclick="event.stopPropagation(); applyWebSearchHistory(${index})" style="padding:2px 8px; border:none; background:#4c6ef5; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
+                        </div>
+                    `;
+                    div.onclick = () => applyWebSearchHistory(index);
+                    list.appendChild(div);
+                });
+            } catch (e) {
+                console.error('加载搜索引擎历史失败:', e);
+            }
+        }
+
+        async function applyWebSearchHistory(index) {
+            try {
+                const response = await fetch('/api/web-search-history-apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index })
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const config = data.config;
+                    webSearchConfigured = true;
+                    const providerNames = {tavily:'Tavily',serpapi:'SerpAPI',bing:'Bing',google:'Google',brave:'Brave'};
+                    const pName = providerNames[config.provider] || config.provider;
+                    document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${pName} 已配置</span>`;
+                    currentProvider = config.provider;
+                    selectProvider(config.provider);
+                    alert('已应用历史配置: ' + pName);
+                } else {
+                    alert('应用历史配置失败');
+                }
+            } catch (e) {
+                alert('应用失败: ' + e.message);
+            }
+        }
+
         async function restoreConfigs() {
             const llmConfig = JSON.parse(localStorage.getItem('llmConfig') || 'null');
             if (llmConfig && llmConfig.api_endpoint && llmConfig.model_name) {
@@ -1251,6 +1325,7 @@
         refreshLogs();
         restoreConfigs();
         loadLlmHistory();
+        loadWebSearchHistory();
     </script>
 </body>
 </html>

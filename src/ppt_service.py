@@ -244,6 +244,7 @@ class PPTService:
         content = content.replace('\n', '<br>')
 
         content = re.sub(r'\*\*(.+?)\*\*', r'<strong class="highlight-keyword">\1</strong>', content)
+        content = content.replace('**', '')
 
         if content_style == "numbered":
             lines = content.split('<br>')
@@ -280,8 +281,14 @@ class PPTService:
             items.append(f'<div class="bullet-item">{line}</div>')
         return '<div class="bullet-list">' + ''.join(items) + '</div>'
 
+    @staticmethod
+    def _clean_markdown(text: str) -> str:
+        import re
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = text.replace('**', '')
+        return text
+
     def _generate_slide_html(self, slide: Dict[str, Any], _config: Dict[str, Any]) -> str:
-        """生成单个幻灯片的HTML"""
         slide_type = slide.get("type", "content")
         title = slide.get("title", "")
         subtitle = slide.get("subtitle", "")
@@ -299,8 +306,9 @@ class PPTService:
             return f'<div class="slide title-slide" {accent_style}>{icon_html}<h1>{title}</h1><h3>{subtitle}</h3></div>'
 
         if slide_type == "agenda":
+            safe_content = self._clean_markdown(content)
             icon_html = f'<div class="slide-icon">{icon}</div>' if icon else ''
-            return f'<div class="slide agenda-slide" {accent_style}>{icon_html}<h2>{title}</h2><div class="content">{content}</div></div>'
+            return f'<div class="slide agenda-slide" {accent_style}>{icon_html}<h2>{title}</h2><div class="content">{safe_content}</div></div>'
 
         if slide_type == "thankyou":
             icon_html = f'<div class="slide-icon">{icon}</div>' if icon else ''
@@ -319,6 +327,7 @@ class PPTService:
 
         if layout == "quote":
             first_line = content.split('\n')[0].strip().lstrip('•-* ') if content else title
+            first_line = self._clean_markdown(first_line)
             return f'''<div class="slide content-slide layout-quote" {accent_style}>
                 {icon_html}
                 <div class="quote-mark">"</div>
@@ -328,6 +337,7 @@ class PPTService:
 
         if layout == "two-column":
             lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
+            lines = [self._clean_markdown(l) for l in lines]
             mid = (len(lines) + 1) // 2
             left_items = lines[:mid]
             right_items = lines[mid:]
@@ -347,7 +357,7 @@ class PPTService:
             cards_html = ""
             for i, line in enumerate(lines[:4]):
                 card_num = i + 1
-                short_title = line.split('**')[0].strip() if '**' in line else line[:20]
+                line = self._clean_markdown(line)
                 cards_html += f'''<div class="card">
                     <div class="card-number">{card_num}</div>
                     <div class="card-text">{line}</div>
@@ -362,6 +372,7 @@ class PPTService:
             lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
             items_html = ""
             for i, line in enumerate(lines[:5]):
+                line = self._clean_markdown(line)
                 items_html += f'''<div class="timeline-item">
                     <div class="timeline-dot"></div>
                     <div class="timeline-content"><strong>{i+1}.</strong> {line}</div>

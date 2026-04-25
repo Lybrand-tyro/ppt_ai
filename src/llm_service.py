@@ -813,6 +813,8 @@ PPT Topic: {topic}
                     continue
                 raise
 
+        raise RuntimeError("LLM API调用异常终止")
+
     def _parse_outline_response(self, response: str) -> Dict[str, Any]:
         """解析大纲响应"""
         try:
