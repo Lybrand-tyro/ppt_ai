@@ -4,7 +4,7 @@ PPT AI - FastAPI主程序
 支持多种联网搜索API
 """
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,8 @@ import sys
 import os
 import io
 import json
+import hashlib
+import secrets
 from datetime import datetime
 from urllib.parse import quote
 
@@ -26,6 +28,31 @@ from .progress import progress_tracker
 
 LLM_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_history.json")
 WEB_SEARCH_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_search_history.json")
+ADMIN_CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "admin_config.json")
+
+_admin_tokens: Dict[str, float] = {}
+
+def _hash_password(pwd: str) -> str:
+    return hashlib.sha256(pwd.encode('utf-8')).hexdigest()
+
+def _load_admin_config() -> dict:
+    if os.path.exists(ADMIN_CONFIG_FILE):
+        try:
+            with open(ADMIN_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_admin_config(config: dict):
+    with open(ADMIN_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+def _is_admin(request: Request) -> bool:
+    token = request.headers.get('X-Admin-Token', '')
+    if not token or token not in _admin_tokens:
+        return False
+    return True
 
 def _load_llm_history() -> list:
     if os.path.exists(LLM_HISTORY_FILE):
@@ -96,6 +123,48 @@ def _add_web_search_history(provider: str, api_key: str = "", cx: str = ""):
 
 app = FastAPI(title="PPT AI", description="AI驱动的PPT生成器")
 
+@app.post("/api/admin-login")
+async def admin_login(data: dict = Body(...)):
+    password = data.get("password", "")
+    config = _load_admin_config()
+    stored_hash = config.get("password_hash", "")
+    if not stored_hash:
+        return {"status": "no_password", "message": "管理员密钥尚未设置", "is_admin": False}
+    if _hash_password(password) != stored_hash:
+        return {"status": "wrong", "message": "密钥错误", "is_admin": False}
+    token = secrets.token_hex(16)
+    _admin_tokens[token] = datetime.now().timestamp()
+    return {"status": "ok", "token": token, "message": "验证成功", "is_admin": True}
+
+@app.post("/api/admin-set-password")
+async def admin_set_password(data: dict = Body(...)):
+    old_password = data.get("old_password", "")
+    new_password = data.get("new_password", "")
+    if not new_password:
+        raise HTTPException(status_code=400, detail="新密钥不能为空")
+    config = _load_admin_config()
+    stored_hash = config.get("password_hash", "")
+    if stored_hash and _hash_password(old_password) != stored_hash:
+        raise HTTPException(status_code=403, detail="旧密钥错误")
+    config["password_hash"] = _hash_password(new_password)
+    _save_admin_config(config)
+    token = secrets.token_hex(16)
+    _admin_tokens[token] = datetime.now().timestamp()
+    return {"status": "ok", "token": token, "message": "管理员密钥设置成功"}
+
+@app.get("/api/admin-status")
+async def admin_status(request: Request):
+    config = _load_admin_config()
+    has_password = bool(config.get("password_hash", ""))
+    is_admin = _is_admin(request)
+    return {"has_password": has_password, "is_admin": is_admin}
+
+@app.post("/api/admin-logout")
+async def admin_logout(request: Request):
+    token = request.headers.get('X-Admin-Token', '')
+    _admin_tokens.pop(token, None)
+    return {"status": "ok"}
+
 web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
 if os.path.exists(web_dir):
     app.mount("/static", StaticFiles(directory=web_dir), name="static")
@@ -147,7 +216,9 @@ async def get_llm_status():
     }
 
 @app.get("/api/llm-history")
-async def get_llm_history():
+async def get_llm_history(request: Request):
+    if not _is_admin(request):
+        return {"history": [], "need_admin": True}
     history = _load_llm_history()
     safe_history = []
     for item in history:
@@ -161,7 +232,9 @@ async def get_llm_history():
     return {"history": safe_history}
 
 @app.post("/api/llm-history-apply")
-async def apply_llm_history(data: dict = Body(...)):
+async def apply_llm_history(request: Request, data: dict = Body(...)):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     index = data.get("index", -1)
     history = _load_llm_history()
     if index < 0 or index >= len(history):
@@ -231,7 +304,9 @@ async def get_web_search_status():
     }
 
 @app.get("/api/web-search-history")
-async def get_web_search_history():
+async def get_web_search_history(request: Request):
+    if not _is_admin(request):
+        return {"history": [], "need_admin": True}
     history = _load_web_search_history()
     safe_history = []
     for item in history:
@@ -244,7 +319,9 @@ async def get_web_search_history():
     return {"history": safe_history}
 
 @app.post("/api/web-search-history-apply")
-async def apply_web_search_history(data: dict = Body(...)):
+async def apply_web_search_history(request: Request, data: dict = Body(...)):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     index = data.get("index", -1)
     history = _load_web_search_history()
     if index < 0 or index >= len(history):
@@ -406,12 +483,13 @@ async def download_pptx(data: dict = Body(...)):
         raise HTTPException(status_code=500, detail=f"生成PPTX失败: {str(e)}")
 
 @app.get("/api/logs")
-async def get_logs(lines: int = 100):
+async def get_logs(request: Request, lines: int = 100):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     try:
         from datetime import datetime
         log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
         log_file = os.path.join(log_dir, f"ppt_ai_{datetime.now().strftime('%Y%m%d')}.log")
-        logger.info(f"尝试读取日志文件: {log_file}")
         if os.path.exists(log_file):
             with open(log_file, 'r', encoding='utf-8') as f:
                 all_lines = f.readlines()

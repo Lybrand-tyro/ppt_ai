@@ -38,7 +38,7 @@ class ProgressTracker:
             self._tasks[task_id]["status"] = "running"
             if step:
                 self._tasks[task_id]["steps"].append(step)
-        logger.info(f"任务 {task_id} 进度: {progress}% - {message}")
+        logger.debug(f"任务 {task_id} 进度: {progress}% - {message}")
 
     def complete(self, task_id: str, message: str = "完成"):
         with self._lock:

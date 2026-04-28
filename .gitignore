@@ -6,3 +6,4 @@ venv/
 .venv/
 llm_history.json
 web_search_history.json
+admin_config.json

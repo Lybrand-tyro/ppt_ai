@@ -5,20 +5,202 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PPT AI - 智能PPT生成器</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Microsoft YaHei', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #f0f2f5;
             min-height: 100vh;
-            padding: 20px;
+            padding-top: 64px;
         }
-        .container {
-            max-width: 1400px;
+        .topbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 800;
+            border-bottom: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .topbar-title {
+            color: #1f2937;
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-right: 24px;
+            white-space: nowrap;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #6b7280;
+            font-size: 13px;
+            user-select: none;
+            position: relative;
+        }
+        .nav-item:hover {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .nav-item .nav-icon {
+            font-size: 16px;
+        }
+        .nav-item .nav-arrow {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+        .nav-item .nav-arrow.open {
+            transform: rotate(180deg);
+        }
+        .nav-separator {
+            width: 1px;
+            height: 24px;
+            background: #e5e7eb;
+            margin: 0 8px;
+        }
+        .mini-toggle {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+        .mini-toggle input { opacity: 0; width: 0; height: 0; }
+        .mini-toggle .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #d1d5db;
+            transition: .3s;
+            border-radius: 20px;
+        }
+        .mini-toggle .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 2px;
+            bottom: 2px;
+            background: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        .mini-toggle input:checked + .slider {
+            background: #10b981;
+        }
+        .mini-toggle input:checked + .slider:before {
+            transform: translateX(16px);
+        }
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .user-icon-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: #f3f4f6;
+            border: 2px solid #e5e7eb;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+        .user-icon-btn:hover { background: #e5e7eb; }
+        .user-icon-btn.admin {
+            border-color: #fbbf24;
+            box-shadow: 0 0 8px rgba(251,191,36,0.3);
+        }
+        .user-dropdown {
+            position: absolute;
+            top: 48px;
+            right: 0;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            min-width: 220px;
+            overflow: hidden;
+            display: none;
+        }
+        .user-dropdown.show { display: block; }
+        .user-dropdown .menu-item {
+            padding: 12px 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #333;
+            transition: background 0.15s;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+        }
+        .user-dropdown .menu-item:hover { background: #f0f4ff; }
+        .user-dropdown .menu-item .badge {
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 8px;
+            margin-left: auto;
+        }
+        .user-dropdown .menu-item .badge.admin { background: #fef3c7; color: #92400e; }
+        .user-dropdown .menu-item .badge.need { background: #fee2e2; color: #991b1b; }
+        .user-dropdown .divider { height: 1px; background: #e5e7eb; margin: 4px 0; }
+
+        .dropdown-panel {
+            position: fixed;
+            top: 56px;
+            left: 0;
+            right: 0;
+            background: white;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+            z-index: 700;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .dropdown-panel.open {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .dropdown-panel-inner {
+            max-width: 800px;
             margin: 0 auto;
+            padding: 20px 25px;
+        }
+        .panel-section {
+            display: none;
+        }
+        .panel-section.active {
+            display: block;
+        }
+        .panel-section h3 {
+            color: #374151;
+            margin-bottom: 12px;
+            font-size: 1.1em;
+        }
+
+        .main-content {
+            max-width: 1400px;
+            margin: 20px auto 0;
+            padding: 0 20px;
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
@@ -27,17 +209,11 @@
             background: white;
             border-radius: 15px;
             padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-        h1 {
-            text-align: center;
-            color: white;
-            font-size: 2.5em;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border: 1px solid #e5e7eb;
         }
         h2 {
-            color: #667eea;
+            color: #374151;
             margin-bottom: 15px;
             font-size: 1.5em;
         }
@@ -49,6 +225,7 @@
             margin-bottom: 5px;
             color: #333;
             font-weight: bold;
+            font-size: 0.9em;
         }
         input[type="text"], textarea, select {
             width: 100%;
@@ -60,8 +237,8 @@
         }
         input[type="text"]:focus, textarea:focus, select:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
         textarea {
             min-height: 150px;
@@ -77,34 +254,13 @@
             transition: all 0.3s;
             font-weight: bold;
         }
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #764ba2;
-            transform: translateY(-2px);
-        }
-        .btn-secondary {
-            background: #48bb78;
-            color: white;
-        }
-        .btn-secondary:hover {
-            background: #38a169;
-            transform: translateY(-2px);
-        }
-        .btn-download {
-            background: #e67e22;
-            color: white;
-        }
-        .btn-download:hover {
-            background: #d35400;
-            transform: translateY(-2px);
-        }
-        .btn-sm {
-            padding: 6px 14px;
-            font-size: 13px;
-        }
+        .btn-primary { background: #4f46e5; color: white; }
+        .btn-primary:hover { background: #4338ca; transform: translateY(-2px); }
+        .btn-secondary { background: #6b7280; color: white; }
+        .btn-secondary:hover { background: #4b5563; transform: translateY(-2px); }
+        .btn-download { background: #f59e0b; color: white; }
+        .btn-download:hover { background: #d97706; transform: translateY(-2px); }
+        .btn-sm { padding: 6px 14px; font-size: 13px; }
         .btn-group {
             display: flex;
             gap: 10px;
@@ -130,154 +286,8 @@
             border-radius: 50%;
             margin-right: 8px;
         }
-        .status-indicator.connected {
-            background: #48bb78;
-            box-shadow: 0 0 5px #48bb78;
-        }
-        .status-indicator.disconnected {
-            background: #f56565;
-            box-shadow: 0 0 5px #f56565;
-        }
-        .llm-config {
-            background: #f7fafc;
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 15px;
-        }
-        .llm-config h3 {
-            color: #667eea;
-            margin-bottom: 10px;
-        }
-        .web-search-section {
-            margin: 12px 0;
-        }
-        .web-search-toggle {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            background: white;
-            border-radius: 10px;
-            border: 2px solid #e0e0e0;
-            transition: all 0.3s;
-            cursor: pointer;
-        }
-        .web-search-toggle.active {
-            border-color: #667eea;
-            background: #f0f4ff;
-        }
-        .toggle-switch {
-            position: relative;
-            width: 52px;
-            height: 28px;
-            flex-shrink: 0;
-        }
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        .toggle-slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .3s;
-            border-radius: 28px;
-        }
-        .toggle-slider:before {
-            position: absolute;
-            content: "";
-            height: 22px;
-            width: 22px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: .3s;
-            border-radius: 50%;
-        }
-        .toggle-switch input:checked + .toggle-slider {
-            background-color: #667eea;
-        }
-        .toggle-switch input:checked + .toggle-slider:before {
-            transform: translateX(24px);
-        }
-        .toggle-label {
-            font-weight: bold;
-            color: #333;
-        }
-        .toggle-desc {
-            font-size: 0.85em;
-            color: #666;
-            margin-top: 2px;
-        }
-        .feature-badges {
-            display: flex;
-            gap: 8px;
-            margin-top: 8px;
-            flex-wrap: wrap;
-        }
-        .feature-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.75em;
-            font-weight: bold;
-        }
-        .feature-badge.search {
-            background: #e8f5e9;
-            color: #2e7d32;
-        }
-        .feature-badge.enrich {
-            background: #e3f2fd;
-            color: #1565c0;
-        }
-        .web-search-config {
-            background: #f0f4ff;
-            border: 2px solid #667eea;
-            border-radius: 10px;
-            margin-top: 8px;
-            overflow: hidden;
-            transition: all 0.3s ease;
-        }
-        .config-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 15px;
-            background: #e8edfa;
-            cursor: pointer;
-            user-select: none;
-        }
-        .config-header h4 {
-            color: #4c6ef5;
-            margin: 0;
-            font-size: 0.95em;
-        }
-        .config-header .arrow {
-            transition: transform 0.3s;
-            color: #4c6ef5;
-            font-weight: bold;
-        }
-        .config-header .arrow.up {
-            transform: rotate(180deg);
-        }
-        .config-body {
-            padding: 15px;
-            max-height: 500px;
-            overflow: hidden;
-            transition: max-height 0.3s ease, padding 0.3s ease;
-        }
-        .config-body.collapsed {
-            max-height: 0;
-            padding-top: 0;
-            padding-bottom: 0;
-        }
+        .status-indicator.connected { background: #10b981; box-shadow: 0 0 5px #10b981; }
+        .status-indicator.disconnected { background: #ef4444; box-shadow: 0 0 5px #ef4444; }
         .provider-selector {
             display: flex;
             gap: 6px;
@@ -295,50 +305,45 @@
             transition: all 0.2s;
             color: #555;
         }
-        .provider-btn:hover {
-            border-color: #667eea;
-            color: #667eea;
+        .provider-btn:hover { border-color: #4f46e5; color: #4f46e5; }
+        .provider-btn.active { background: #4f46e5; color: white; border-color: #4f46e5; }
+        .provider-config-form { margin-top: 10px; }
+        .provider-help { font-size: 0.8em; color: #888; margin-top: 4px; }
+        .provider-help a { color: #4f46e5; }
+        .outline-editor {
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
         }
-        .provider-btn.active {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
-        }
-        .provider-btn .free-tag {
-            font-size: 0.7em;
-            background: #48bb78;
-            color: white;
-            padding: 1px 6px;
+        .outline-item {
+            background: #f9fafb;
+            padding: 15px;
+            margin: 10px 0;
             border-radius: 8px;
-            margin-left: 4px;
+            border-left: 4px solid #4f46e5;
         }
-        .provider-config-form {
-            margin-top: 10px;
-        }
-        .provider-help {
-            font-size: 0.8em;
-            color: #888;
-            margin-top: 4px;
-        }
-        .provider-help a {
-            color: #4c6ef5;
+        .outline-item h4 { color: #4f46e5; margin-bottom: 8px; }
+        .outline-item textarea { width: 100%; min-height: 80px; margin-top: 8px; }
+        .preview-container { margin-top: 20px; }
+        .preview-iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+            border-radius: 10px;
+            background: white;
         }
         .loading {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.7);
             justify-content: center;
             align-items: center;
             z-index: 1000;
             flex-direction: column;
         }
-        .loading.show {
-            display: flex;
-        }
+        .loading.show { display: flex; }
         .loading p {
             color: white;
             font-size: 1.2em;
@@ -352,11 +357,10 @@
             border-radius: 10px;
             overflow: hidden;
             height: 16px;
-            position: relative;
         }
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, #48bb78, #667eea);
+            background: linear-gradient(90deg, #10b981, #4f46e5);
             border-radius: 10px;
             transition: width 0.3s ease;
             width: 0%;
@@ -377,181 +381,167 @@
             cursor: pointer;
             font-size: 14px;
             font-weight: bold;
-            transition: background 0.2s;
         }
-        .cancel-btn:hover {
-            background: #c0392b;
+        .cancel-btn:hover { background: #c0392b; }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
         }
-        .outline-editor {
-            border: 2px solid #667eea;
-            border-radius: 10px;
-            padding: 15px;
-            margin-top: 15px;
+        .modal-overlay.show { display: flex; }
+        .modal-box {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            min-width: 360px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
-        .outline-item {
-            background: #f7fafc;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-        .outline-item h4 {
-            color: #667eea;
-            margin-bottom: 8px;
-        }
-        .outline-item textarea {
+        .modal-box h3 { margin-bottom: 15px; color: #333; }
+        .modal-box input {
             width: 100%;
-            min-height: 80px;
-            margin-top: 8px;
+            padding: 10px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 12px;
         }
-        .log-viewer {
+        .modal-box input:focus { outline: none; border-color: #4f46e5; }
+        .modal-box .btn-row {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+        .log-modal .log-viewer {
             background: #1a1a1a;
-            color: #ffffff;
+            color: #fff;
             font-family: 'Consolas', monospace;
             padding: 15px;
             border-radius: 8px;
-            max-height: 200px;
+            max-height: 400px;
             overflow-y: auto;
-            margin-top: 10px;
             white-space: pre-wrap;
             font-size: 11px;
+            margin-top: 10px;
         }
-        .log-panel {
-            position: relative;
+        .history-section { margin-bottom: 12px; }
+        .history-section .history-title {
+            font-size: 0.85em;
+            font-weight: bold;
+            color: #6b7280;
+            margin-bottom: 6px;
         }
-        .log-header {
+        .history-list { max-height: 120px; overflow-y: auto; }
+        .history-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
-        }
-        .log-header h2 {
-            margin: 0;
-            font-size: 1.2em;
-        }
-        .collapse-btn {
-            background: #48bb78;
-            color: white;
-            border: none;
-            border-radius: 5px;
             padding: 5px 10px;
+            margin-bottom: 3px;
+            background: #f9fafb;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 12px;
-            font-weight: bold;
+            font-size: 0.82em;
+            transition: background 0.2s;
         }
-        .collapse-btn:hover {
-            background: #38a169;
+        .history-item:hover { background: #f3f4f6; }
+        .nav-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
         }
-        .log-content {
-            transition: all 0.3s ease;
-            overflow: hidden;
-        }
-        .log-content.collapsed {
-            max-height: 0;
-            padding: 0;
-            margin: 0;
-        }
-        .preview-container {
-            margin-top: 20px;
-        }
-        .preview-iframe {
-            width: 100%;
-            height: 600px;
-            border: none;
-            border-radius: 10px;
-            background: white;
-        }
+        .nav-status-dot.on { background: #10b981; box-shadow: 0 0 4px #10b981; }
+        .nav-status-dot.off { background: #d1d5db; }
     </style>
 </head>
 <body>
-    <h1>PPT AI - 智能PPT生成器</h1>
+    <div class="topbar">
+        <div class="topbar-left">
+            <span class="topbar-title">PPT AI</span>
 
-    <div class="container">
-        <div class="panel">
-            <h2>第一步：输入提示词或编写大纲</h2>
+            <div class="nav-item" onclick="toggleAbout()">
+                <span class="nav-icon">💡</span>
+                <span>关于开发者</span>
+                <span class="nav-arrow" id="aboutArrow">▼</span>
+            </div>
+        </div>
 
-            <div class="form-group">
-                <label for="topic">PPT主题/需求描述</label>
-                <textarea id="topic" placeholder="请输入PPT主题或详细需求，如：人工智能的发展历程和应用场景分析"></textarea>
+        <div class="topbar-right" style="position:relative; display:flex; align-items:center; gap:4px;">
+            <div class="nav-item" onclick="togglePanel('llm')">
+                <span class="nav-icon">🤖</span>
+                <span>LLM</span>
+                <span class="nav-status-dot off" id="llmDot"></span>
+                <span class="nav-arrow" id="llmArrow">▼</span>
             </div>
 
-            <div class="form-group">
-                <label for="language">语言</label>
-                <select id="language">
-                    <option value="zh">中文</option>
-                    <option value="en">English</option>
-                </select>
+            <div class="nav-separator"></div>
+
+            <div class="nav-item" onclick="togglePanel('search')">
+                <label class="mini-toggle" onclick="event.stopPropagation()">
+                    <input type="checkbox" id="useWebSearch" onchange="onWebSearchToggle()">
+                    <span class="slider"></span>
+                </label>
+                <span class="nav-icon">🌐</span>
+                <span>搜索</span>
+                <span class="nav-status-dot off" id="searchDot"></span>
+                <span class="nav-arrow" id="searchArrow">▼</span>
             </div>
 
-            <div class="web-search-section">
-                <div class="web-search-toggle" id="webSearchToggle">
-                    <label class="toggle-switch" onclick="event.stopPropagation()">
-                        <input type="checkbox" id="useWebSearch" onchange="onWebSearchToggle()">
-                        <span class="toggle-slider"></span>
-                    </label>
-                    <div>
-                        <div class="toggle-label">🌐 联网搜索增强</div>
-                        <div class="toggle-desc">开启后，LLM将联网搜索资料，内容更丰富、更准确</div>
-                        <div class="feature-badges">
-                            <span class="feature-badge search">🔍 全网搜索</span>
-                            <span class="feature-badge enrich">📊 内容增强</span>
-                        </div>
-                    </div>
+            <div class="nav-separator"></div>
+
+            <button class="user-icon-btn" id="userIconBtn" onclick="toggleUserMenu()">👤</button>
+            <div class="user-dropdown" id="userDropdown">
+                <div class="menu-item" style="pointer-events:none;">
+                    <span>👤</span>
+                    <span id="adminStatusText">普通用户</span>
+                    <span class="badge need" id="adminBadge">未验证</span>
                 </div>
-
-                <div class="web-search-config" id="webSearchConfig">
-                    <div class="config-header" onclick="toggleWebSearchConfig()">
-                        <h4>⚙️ 搜索引擎配置</h4>
-                        <span class="arrow up" id="configArrow">▼</span>
-                    </div>
-                    <div class="config-body" id="configBody">
-                        <div class="provider-selector" id="providerSelector">
-                            <button class="provider-btn active" data-provider="tavily" onclick="selectProvider('tavily')">Tavily</button>
-                            <button class="provider-btn" data-provider="serpapi" onclick="selectProvider('serpapi')">SerpAPI</button>
-                            <button class="provider-btn" data-provider="bing" onclick="selectProvider('bing')">Bing</button>
-                            <button class="provider-btn" data-provider="google" onclick="selectProvider('google')">Google</button>
-                            <button class="provider-btn" data-provider="brave" onclick="selectProvider('brave')">Brave</button>
-                        </div>
-
-                        <div class="provider-config-form" id="providerConfigForm">
-                        </div>
-
-                        <div id="webSearchHistorySection" style="display:none; margin-bottom:10px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                                <span style="font-size:0.85em; font-weight:bold; color:#4c6ef5;">📋 历史配置</span>
-                            </div>
-                            <div id="webSearchHistoryList" style="max-height:120px; overflow-y:auto;"></div>
-                        </div>
-
-                        <div class="btn-group">
-                            <button class="btn btn-primary btn-sm" onclick="configureWebSearch()">保存配置</button>
-                            <span id="webSearchStatus">
-                                <span class="status-indicator disconnected"></span>
-                                <span>联网搜索未配置</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
+                <div class="divider"></div>
+                <button class="menu-item" id="adminLoginBtn" onclick="showAdminModal()">
+                    <span>🔑</span><span>输入管理员密钥</span>
+                </button>
+                <button class="menu-item" id="adminSetPwdBtn" onclick="showAdminSetModal()" style="display:none;">
+                    <span>⚙️</span><span>设置/修改密钥</span>
+                </button>
+                <button class="menu-item" id="adminLogoutBtn" onclick="adminLogout()" style="display:none;">
+                    <span>🚪</span><span>退出管理员</span>
+                </button>
+                <div class="divider"></div>
+                <button class="menu-item" onclick="openLogsModal()">
+                    <span>📋</span><span>查看日志</span>
+                    <span class="badge need" id="logsBadge">需管理员</span>
+                </button>
             </div>
+        </div>
+    </div>
 
-            <div class="btn-group">
-                <button class="btn btn-primary" onclick="generateOutline()">生成大纲</button>
-                <button class="btn btn-secondary" onclick="useManualOutline()">使用手动大纲</button>
-                <button class="btn btn-secondary" onclick="clearForm()">清空</button>
-            </div>
+    <div class="dropdown-panel" id="aboutPanel">
+        <div class="dropdown-panel-inner" style="text-align:center; padding:20px 25px;">
+            <p style="font-size:1.1em; color:#374151; margin-bottom:10px;">PPT AI - 智能PPT生成器</p>
+            <p style="color:#6b7280; font-size:0.9em; margin-bottom:12px;">基于大语言模型的自动化PPT生成工具</p>
+            <a href="https://github.com/ZYKJEMC/ppt_ai" target="_blank" style="display:inline-flex; align-items:center; gap:6px; color:#4f46e5; font-weight:bold; font-size:0.95em; text-decoration:none; padding:8px 16px; border:1px solid #e5e7eb; border-radius:8px; transition:background 0.2s;">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                GitHub 仓库
+            </a>
+        </div>
+    </div>
 
-            <div class="llm-config">
-                <h3>LLM配置</h3>
-                <div id="llmHistorySection" style="display:none; margin-bottom:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-size:0.85em; font-weight:bold; color:#667eea;">📋 历史配置</span>
-                        <button class="btn btn-sm" style="padding:3px 10px; font-size:0.75em; background:#e0e0e0; color:#555;" onclick="toggleLlmHistory()">收起</button>
-                    </div>
-                    <div id="llmHistoryList" style="max-height:150px; overflow-y:auto;"></div>
+    <div class="dropdown-panel" id="dropdownPanel">
+        <div class="dropdown-panel-inner">
+            <div class="panel-section" id="llmSection">
+                <h3>🤖 LLM 配置</h3>
+                <div id="llmHistorySection" class="history-section" style="display:none;">
+                    <div class="history-title">📋 历史配置</div>
+                    <div id="llmHistoryList" class="history-list"></div>
                 </div>
                 <div class="form-group">
                     <label for="apiEndpoint">API端点</label>
-                    <input type="text" id="apiEndpoint" placeholder="http://localhost:18080 （自动补全 /v1/chat/completions）">
+                    <input type="text" id="apiEndpoint" placeholder="http://localhost:18080（自动补全 /v1/chat/completions）">
                 </div>
                 <div class="form-group">
                     <label for="apiKey">API密钥</label>
@@ -566,12 +556,51 @@
                     <label for="isLocal">本地模型（如WSL2 llama.cpp）</label>
                 </div>
                 <div class="btn-group">
-                    <button class="btn btn-primary" onclick="configureLLM()">保存配置</button>
-                    <span id="llmStatus">
-                        <span class="status-indicator disconnected"></span>
-                        <span>LLM未配置</span>
-                    </span>
+                    <button class="btn btn-primary btn-sm" onclick="configureLLM()">保存配置</button>
+                    <span id="llmStatus"><span class="status-indicator disconnected"></span><span>LLM未配置</span></span>
                 </div>
+            </div>
+
+            <div class="panel-section" id="searchSection">
+                <h3>🌐 联网搜索配置</h3>
+                <div class="provider-selector" id="providerSelector">
+                    <button class="provider-btn active" data-provider="tavily" onclick="selectProvider('tavily')">Tavily</button>
+                    <button class="provider-btn" data-provider="serpapi" onclick="selectProvider('serpapi')">SerpAPI</button>
+                    <button class="provider-btn" data-provider="bing" onclick="selectProvider('bing')">Bing</button>
+                    <button class="provider-btn" data-provider="google" onclick="selectProvider('google')">Google</button>
+                    <button class="provider-btn" data-provider="brave" onclick="selectProvider('brave')">Brave</button>
+                </div>
+                <div class="provider-config-form" id="providerConfigForm"></div>
+                <div id="webSearchHistorySection" class="history-section" style="display:none;">
+                    <div class="history-title">📋 历史配置</div>
+                    <div id="webSearchHistoryList" class="history-list"></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary btn-sm" onclick="configureWebSearch()">保存配置</button>
+                    <span id="webSearchStatus"><span class="status-indicator disconnected"></span><span>联网搜索未配置</span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="panel">
+            <h2>第一步：输入提示词或编写大纲</h2>
+            <div class="form-group">
+                <label for="topic">PPT主题/需求描述</label>
+                <textarea id="topic" placeholder="请输入PPT主题或详细需求，如：人工智能的发展历程和应用场景分析"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="language">语言</label>
+                <select id="language">
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="generateOutline()">生成大纲</button>
+                <button class="btn btn-secondary" onclick="useManualOutline()">使用手动大纲</button>
+                <button class="btn btn-secondary" onclick="clearForm()">清空</button>
             </div>
         </div>
 
@@ -584,7 +613,6 @@
                     <button class="btn btn-secondary" onclick="updateOutlineFromEditor()">更新大纲</button>
                 </div>
             </div>
-
             <div class="preview-container" id="previewContainer" style="display: none;">
                 <h2>第三步：预览PPT</h2>
                 <div class="btn-group">
@@ -592,19 +620,6 @@
                     <button class="btn btn-download" onclick="downloadPPTX()">下载PPTX</button>
                 </div>
                 <iframe id="pptPreview" class="preview-iframe"></iframe>
-            </div>
-        </div>
-
-        <div class="panel log-panel" style="grid-column: 1 / -1;">
-            <div class="log-header">
-                <h2>日志</h2>
-                <div>
-                    <button class="btn btn-secondary" onclick="refreshLogs()" style="margin-right: 10px;">刷新日志</button>
-                    <button class="collapse-btn" onclick="toggleLog()">折叠</button>
-                </div>
-            </div>
-            <div id="logContent" class="log-content">
-                <div id="logViewer" class="log-viewer">日志将显示在这里...</div>
             </div>
         </div>
     </div>
@@ -618,6 +633,44 @@
         <button class="cancel-btn" id="cancelBtn" onclick="cancelCurrentTask()">取消</button>
     </div>
 
+    <div class="modal-overlay" id="adminModal">
+        <div class="modal-box">
+            <h3>🔑 输入管理员密钥</h3>
+            <p style="color:#666; font-size:0.9em; margin-bottom:12px;">管理员可查看后端历史配置和日志</p>
+            <input type="password" id="adminPasswordInput" placeholder="请输入管理员密钥">
+            <div class="btn-row">
+                <button class="btn btn-secondary btn-sm" onclick="closeAdminModal()">取消</button>
+                <button class="btn btn-primary btn-sm" onclick="adminLogin()">验证</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="adminSetModal">
+        <div class="modal-box">
+            <h3>⚙️ 设置管理员密钥</h3>
+            <input type="password" id="adminOldPwd" placeholder="旧密钥（首次设置留空）">
+            <input type="password" id="adminNewPwd" placeholder="新密钥">
+            <input type="password" id="adminNewPwd2" placeholder="确认新密钥">
+            <div class="btn-row">
+                <button class="btn btn-secondary btn-sm" onclick="closeAdminSetModal()">取消</button>
+                <button class="btn btn-primary btn-sm" onclick="adminSetPassword()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay log-modal" id="logsModal">
+        <div class="modal-box" style="min-width:600px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3>📋 系统日志</h3>
+                <div>
+                    <button class="btn btn-secondary btn-sm" onclick="refreshLogs()" style="margin-right:8px;">刷新</button>
+                    <button class="btn btn-secondary btn-sm" onclick="closeLogsModal()">关闭</button>
+                </div>
+            </div>
+            <div id="logViewerModal" class="log-viewer">加载中...</div>
+        </div>
+    </div>
+
     <script>
         let currentOutline = null;
         let llmConfigured = false;
@@ -626,6 +679,34 @@
         let currentTaskId = '';
         let progressEventSource = null;
         let currentAbortController = null;
+        let isAdmin = false;
+        let adminToken = '';
+        let hasAdminPassword = false;
+        let activePanel = '';
+        let aboutOpen = false;
+
+        function closeAbout() {
+            document.getElementById('aboutPanel').classList.remove('open');
+            document.getElementById('aboutArrow').classList.remove('open');
+            aboutOpen = false;
+        }
+
+        function toggleAbout() {
+            if (aboutOpen) {
+                closeAbout();
+            } else {
+                if (activePanel) {
+                    const panel = document.getElementById('dropdownPanel');
+                    panel.classList.remove('open');
+                    document.querySelectorAll('.panel-section').forEach(s => s.classList.remove('active'));
+                    document.querySelectorAll('#llmArrow,#searchArrow').forEach(a => a.classList.remove('open'));
+                    activePanel = '';
+                }
+                document.getElementById('aboutPanel').classList.add('open');
+                document.getElementById('aboutArrow').classList.add('open');
+                aboutOpen = true;
+            }
+        }
 
         const providerForms = {
             tavily: `
@@ -669,13 +750,34 @@
             `
         };
 
+        function togglePanel(name) {
+            const panel = document.getElementById('dropdownPanel');
+            const section = document.getElementById(name + 'Section');
+            const arrow = document.getElementById(name + 'Arrow');
+
+            if (aboutOpen) closeAbout();
+
+            if (activePanel === name) {
+                panel.classList.remove('open');
+                section.classList.remove('active');
+                arrow.classList.remove('open');
+                activePanel = '';
+            } else {
+                document.querySelectorAll('.panel-section').forEach(s => s.classList.remove('active'));
+                document.querySelectorAll('#llmArrow,#searchArrow').forEach(a => a.classList.remove('open'));
+                section.classList.add('active');
+                arrow.classList.add('open');
+                panel.classList.add('open');
+                activePanel = name;
+            }
+        }
+
         function selectProvider(provider) {
             currentProvider = provider;
             document.querySelectorAll('.provider-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.provider === provider);
             });
             document.getElementById('providerConfigForm').innerHTML = providerForms[provider] || '';
-
             const saved = JSON.parse(localStorage.getItem('webSearchConfig') || '{}');
             if (saved.provider === provider) {
                 setTimeout(() => {
@@ -687,35 +789,12 @@
             }
         }
 
-        function toggleWebSearchConfig() {
-            const body = document.getElementById('configBody');
-            const arrow = document.getElementById('configArrow');
-
-            if (body.classList.contains('collapsed')) {
-                body.classList.remove('collapsed');
-                arrow.classList.add('up');
-            } else {
-                body.classList.add('collapsed');
-                arrow.classList.remove('up');
-            }
-        }
-
         function onWebSearchToggle() {
-            const toggle = document.getElementById('webSearchToggle');
             const checked = document.getElementById('useWebSearch').checked;
-            if (checked) {
-                toggle.classList.add('active');
-                if (!webSearchConfigured) {
-                    const body = document.getElementById('configBody');
-                    if (body.classList.contains('collapsed')) {
-                        toggleWebSearchConfig();
-                    }
-                    alert('请先配置搜索引擎以启用联网搜索功能');
-                    document.getElementById('useWebSearch').checked = false;
-                    toggle.classList.remove('active');
-                }
-            } else {
-                toggle.classList.remove('active');
+            if (checked && !webSearchConfigured) {
+                alert('请先配置搜索引擎以启用联网搜索功能');
+                document.getElementById('useWebSearch').checked = false;
+                togglePanel('search');
             }
         }
 
@@ -724,106 +803,72 @@
             const apiKey = document.getElementById('apiKey').value;
             const modelName = document.getElementById('modelName').value;
             const isLocal = document.getElementById('isLocal').checked;
-
-            if (!apiEndpoint || !modelName) {
-                alert('请填写API端点和模型名称');
-                return;
-            }
-
+            if (!apiEndpoint || !modelName) { alert('请填写API端点和模型名称'); return; }
             showLoading('配置LLM中...');
-
             try {
                 const response = await fetch('/api/configure-llm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ api_endpoint: apiEndpoint, api_key: apiKey, model_name: modelName, is_local: isLocal })
                 });
-
                 if (response.ok) {
                     llmConfigured = true;
                     document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                    document.getElementById('llmDot').className = 'nav-status-dot on';
                     localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: apiEndpoint, api_key: apiKey, model_name: modelName, is_local: isLocal }));
                     loadLlmHistory();
                     alert('LLM配置成功！');
-                } else {
-                    alert('LLM配置失败');
-                }
-            } catch (error) {
-                alert('配置错误: ' + error.message);
-            } finally {
-                hideLoading();
-            }
+                } else { alert('LLM配置失败'); }
+            } catch (error) { alert('配置错误: ' + error.message); }
+            finally { hideLoading(); }
         }
 
         async function configureWebSearch() {
             const payload = { provider: currentProvider };
-
             if (currentProvider === 'google') {
                 const apiKey = document.getElementById('providerApiKey')?.value;
                 const cx = document.getElementById('providerCx')?.value;
-                if (!apiKey || !cx) {
-                    alert('请填写Google API密钥和搜索引擎ID');
-                    return;
-                }
-                payload.api_key = apiKey;
-                payload.cx = cx;
+                if (!apiKey || !cx) { alert('请填写Google API密钥和搜索引擎ID'); return; }
+                payload.api_key = apiKey; payload.cx = cx;
             } else {
                 const apiKey = document.getElementById('providerApiKey')?.value;
-                if (!apiKey) {
-                    alert('请填写API密钥');
-                    return;
-                }
+                if (!apiKey) { alert('请填写API密钥'); return; }
                 payload.api_key = apiKey;
             }
-
             showLoading('配置联网搜索中...');
-
             try {
                 const response = await fetch('/api/configure-web-search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-
                 if (response.ok) {
                     webSearchConfigured = true;
                     const data = await response.json();
                     const name = data.active_provider || currentProvider;
                     document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
+                    document.getElementById('searchDot').className = 'nav-status-dot on';
                     localStorage.setItem('webSearchConfig', JSON.stringify(payload));
                     loadWebSearchHistory();
-                    alert(`${name} 联网搜索配置成功！现在可以开启联网搜索增强功能。`);
+                    alert(`${name} 联网搜索配置成功！`);
                 } else {
                     const err = await response.json();
                     alert('配置失败: ' + (err.detail || '未知错误'));
                 }
-            } catch (error) {
-                alert('配置错误: ' + error.message);
-            } finally {
-                hideLoading();
-            }
+            } catch (error) { alert('配置错误: ' + error.message); }
+            finally { hideLoading(); }
         }
 
         async function generateOutline() {
             const topic = document.getElementById('topic').value;
             const language = document.getElementById('language').value;
             const useWebSearch = document.getElementById('useWebSearch').checked;
-
-            if (!topic) {
-                alert('请输入PPT主题或需求');
-                return;
-            }
-
-            if (useWebSearch && !webSearchConfigured) {
-                alert('联网搜索未配置，请先配置搜索引擎');
-                return;
-            }
-
+            if (!topic) { alert('请输入PPT主题或需求'); return; }
+            if (useWebSearch && !webSearchConfigured) { alert('联网搜索未配置，请先配置搜索引擎'); return; }
             const taskId = await createTask();
             currentAbortController = new AbortController();
             showLoading(useWebSearch ? '联网搜索并生成大纲中...' : '生成大纲中...');
             startProgressTracking(taskId);
-
             try {
                 const response = await fetch('/api/generate-outline', {
                     method: 'POST',
@@ -831,34 +876,18 @@
                     body: JSON.stringify({ topic, language, use_llm: llmConfigured, use_web_search: useWebSearch, task_id: taskId }),
                     signal: currentAbortController.signal
                 });
-
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    throw new Error(errData.detail || '生成大纲失败');
-                }
-
+                if (!response.ok) { const errData = await response.json().catch(() => ({})); throw new Error(errData.detail || '生成大纲失败'); }
                 currentOutline = await response.json();
                 displayOutline(currentOutline);
-                refreshLogs();
             } catch (error) {
-                if (error.name === 'AbortError') {
-                    console.log('大纲生成已取消');
-                } else {
-                    alert('错误: ' + error.message);
-                }
-            } finally {
-                hideLoading();
-            }
+                if (error.name !== 'AbortError') alert('错误: ' + error.message);
+            } finally { hideLoading(); }
         }
 
         function useManualOutline() {
             const topic = document.getElementById('topic').value;
             const language = document.getElementById('language').value;
-            if (!topic) {
-                alert('请输入PPT主题作为大纲标题');
-                return;
-            }
-
+            if (!topic) { alert('请输入PPT主题作为大纲标题'); return; }
             currentOutline = {
                 title: topic,
                 slides: [
@@ -871,17 +900,14 @@
                 ],
                 metadata: { language: language, total_slides: 6 }
             };
-
             displayOutline(currentOutline);
         }
 
         function displayOutline(outline) {
             const editor = document.getElementById('outlineEditor');
             const content = document.getElementById('outlineContent');
-
             editor.style.display = 'block';
             content.innerHTML = '<h3>' + outline.title + '</h3>';
-
             outline.slides.forEach((slide, index) => {
                 const item = document.createElement('div');
                 item.className = 'outline-item';
@@ -892,39 +918,28 @@
                 `;
                 content.appendChild(item);
             });
-
             document.getElementById('previewContainer').style.display = 'none';
         }
 
         function updateOutlineFromEditor() {
             if (!currentOutline) return;
-
             currentOutline.slides.forEach((slide, index) => {
                 const subtitleEl = document.getElementById(`subtitle_${index}`);
                 const contentEl = document.getElementById(`content_${index}`);
-
                 if (subtitleEl) slide.subtitle = subtitleEl.value;
                 if (contentEl) slide.content = contentEl.value;
             });
-
             alert('大纲已更新');
-            refreshLogs();
         }
 
         async function generateSlides() {
-            if (!currentOutline) {
-                alert('请先生成大纲');
-                return;
-            }
-
+            if (!currentOutline) { alert('请先生成大纲'); return; }
             updateOutlineFromEditor();
-
             const useWebSearch = document.getElementById('useWebSearch').checked;
             const taskId = await createTask();
             currentAbortController = new AbortController();
             showLoading(useWebSearch ? '联网搜索并生成PPT中...' : '生成PPT中...');
             startProgressTracking(taskId);
-
             try {
                 const response = await fetch('/api/generate-slides', {
                     method: 'POST',
@@ -932,30 +947,17 @@
                     body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch, task_id: taskId }),
                     signal: currentAbortController.signal
                 });
-
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    throw new Error(errData.detail || '生成PPT失败');
-                }
-
+                if (!response.ok) { const errData = await response.json().catch(() => ({})); throw new Error(errData.detail || '生成PPT失败'); }
                 const result = await response.json();
                 displayPPT(result.slides_html);
-                refreshLogs();
             } catch (error) {
-                if (error.name === 'AbortError') {
-                    console.log('PPT生成已取消');
-                } else {
-                    alert('错误: ' + error.message);
-                }
-            } finally {
-                hideLoading();
-            }
+                if (error.name !== 'AbortError') alert('错误: ' + error.message);
+            } finally { hideLoading(); }
         }
 
         function displayPPT(html) {
             const preview = document.getElementById('pptPreview');
             const container = document.getElementById('previewContainer');
-
             container.style.display = 'block';
             preview.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
         }
@@ -963,7 +965,6 @@
         function downloadHTML() {
             const preview = document.getElementById('pptPreview');
             const html = decodeURIComponent(preview.src.split(',')[1]);
-
             const blob = new Blob([html], { type: 'text/html' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -974,29 +975,17 @@
         }
 
         async function downloadPPTX() {
-            if (!currentOutline) {
-                alert('请先生成大纲');
-                return;
-            }
-
+            if (!currentOutline) { alert('请先生成大纲'); return; }
             updateOutlineFromEditor();
-
             const useWebSearch = document.getElementById('useWebSearch').checked;
-
             showLoading('生成PPTX文件中...');
-
             try {
                 const response = await fetch('/api/download-pptx', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ outline: currentOutline, use_llm: llmConfigured, use_web_search: useWebSearch })
                 });
-
-                if (!response.ok) {
-                    const errText = await response.text().catch(() => '');
-                    throw new Error(errText || '生成PPTX失败');
-                }
-
+                if (!response.ok) { throw new Error(await response.text() || '生成PPTX失败'); }
                 const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -1004,35 +993,36 @@
                 a.download = (currentOutline?.title || 'PPT') + '.pptx';
                 a.click();
                 URL.revokeObjectURL(url);
-                refreshLogs();
-            } catch (error) {
-                alert('错误: ' + error.message);
-            } finally {
-                hideLoading();
-            }
+            } catch (error) { alert('错误: ' + error.message); }
+            finally { hideLoading(); }
         }
 
         async function refreshLogs() {
+            if (!isAdmin) {
+                document.getElementById('logViewerModal').textContent = '需要管理员权限才能查看日志';
+                return;
+            }
             try {
-                const response = await fetch('/api/logs');
+                const response = await fetch('/api/logs', { headers: { 'X-Admin-Token': adminToken } });
+                if (response.status === 403) {
+                    document.getElementById('logViewerModal').textContent = '管理员权限已失效，请重新验证';
+                    isAdmin = false; adminToken = ''; updateAdminUI(); return;
+                }
                 if (response.ok) {
                     const data = await response.json();
-                    document.getElementById('logViewer').textContent = data.logs || '无日志';
-                    document.getElementById('logViewer').scrollTop = document.getElementById('logViewer').scrollHeight;
+                    const viewer = document.getElementById('logViewerModal');
+                    viewer.textContent = data.logs || '无日志';
+                    viewer.scrollTop = viewer.scrollHeight;
                 }
-            } catch (error) {
-                console.error('获取日志失败:', error);
-            }
+            } catch (error) { console.error('获取日志失败:', error); }
         }
 
         function showLoading(message) {
-            const loading = document.getElementById('loading');
             document.getElementById('loadingMessage').textContent = message;
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressPercent').textContent = '';
-            loading.classList.add('show');
+            document.getElementById('loading').classList.add('show');
         }
-
         function hideLoading() {
             document.getElementById('loading').classList.remove('show');
             stopProgressTracking();
@@ -1045,8 +1035,7 @@
             progressEventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    const msg = data.message || '处理中...';
-                    document.getElementById('loadingMessage').textContent = msg;
+                    document.getElementById('loadingMessage').textContent = data.message || '处理中...';
                     if (data.progress > 0) {
                         document.getElementById('progressBar').style.width = data.progress + '%';
                         document.getElementById('progressPercent').textContent = data.progress + '%';
@@ -1060,39 +1049,23 @@
                     }
                 } catch (e) { console.error('Progress parse error:', e); }
             };
-            progressEventSource.onerror = function() {
-                stopProgressTracking();
-            };
+            progressEventSource.onerror = function() { stopProgressTracking(); };
         }
-
         function stopProgressTracking() {
-            if (progressEventSource) {
-                progressEventSource.close();
-                progressEventSource = null;
-            }
+            if (progressEventSource) { progressEventSource.close(); progressEventSource = null; }
         }
 
         async function cancelCurrentTask() {
-            if (currentTaskId) {
-                try {
-                    await fetch(`/api/cancel/${currentTaskId}`, { method: 'POST' });
-                } catch (e) { console.error('Cancel error:', e); }
-            }
-            if (currentAbortController) {
-                currentAbortController.abort();
-                currentAbortController = null;
-            }
+            if (currentTaskId) { try { await fetch(`/api/cancel/${currentTaskId}`, { method: 'POST' }); } catch (e) {} }
+            if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
             hideLoading();
         }
 
         async function createTask() {
             try {
                 const r = await fetch('/api/create-task', { method: 'POST' });
-                if (r.ok) {
-                    const data = await r.json();
-                    return data.task_id;
-                }
-            } catch (e) { console.error('Create task error:', e); }
+                if (r.ok) { const data = await r.json(); return data.task_id; }
+            } catch (e) {}
             return '';
         }
 
@@ -1103,18 +1076,118 @@
             currentOutline = null;
         }
 
-        function toggleLog() {
-            const logContent = document.getElementById('logContent');
-            const collapseBtn = document.querySelector('.collapse-btn');
+        function toggleUserMenu() {
+            document.getElementById('userDropdown').classList.toggle('show');
+        }
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.topbar-right')) {
+                document.getElementById('userDropdown').classList.remove('show');
+            }
+        });
 
-            if (logContent.classList.contains('collapsed')) {
-                logContent.classList.remove('collapsed');
-                collapseBtn.textContent = '折叠';
+        function updateAdminUI() {
+            const iconBtn = document.getElementById('userIconBtn');
+            const statusText = document.getElementById('adminStatusText');
+            const badge = document.getElementById('adminBadge');
+            const loginBtn = document.getElementById('adminLoginBtn');
+            const setPwdBtn = document.getElementById('adminSetPwdBtn');
+            const logoutBtn = document.getElementById('adminLogoutBtn');
+            const logsBadge = document.getElementById('logsBadge');
+            if (isAdmin) {
+                iconBtn.classList.add('admin'); iconBtn.textContent = '👑';
+                statusText.textContent = '管理员'; badge.textContent = '已验证'; badge.className = 'badge admin';
+                loginBtn.style.display = 'none'; setPwdBtn.style.display = ''; logoutBtn.style.display = '';
+                logsBadge.textContent = '管理员'; logsBadge.className = 'badge admin';
             } else {
-                logContent.classList.add('collapsed');
-                collapseBtn.textContent = '展开';
+                iconBtn.classList.remove('admin'); iconBtn.textContent = '👤';
+                statusText.textContent = '普通用户'; badge.textContent = '未验证'; badge.className = 'badge need';
+                loginBtn.style.display = hasAdminPassword ? '' : 'none';
+                setPwdBtn.style.display = hasAdminPassword ? 'none' : '';
+                logoutBtn.style.display = 'none';
+                logsBadge.textContent = '需管理员'; logsBadge.className = 'badge need';
             }
         }
+
+        function showAdminModal() {
+            document.getElementById('adminPasswordInput').value = '';
+            document.getElementById('adminModal').classList.add('show');
+            document.getElementById('userDropdown').classList.remove('show');
+            setTimeout(() => document.getElementById('adminPasswordInput').focus(), 100);
+        }
+        function closeAdminModal() { document.getElementById('adminModal').classList.remove('show'); }
+
+        async function adminLogin() {
+            const password = document.getElementById('adminPasswordInput').value;
+            if (!password) { alert('请输入密钥'); return; }
+            try {
+                const r = await fetch('/api/admin-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await r.json();
+                if (data.status === 'no_password') {
+                    hasAdminPassword = false; updateAdminUI();
+                    alert('管理员密钥尚未设置，请点击「设置密钥」进行设置');
+                    closeAdminModal();
+                } else if (data.status === 'wrong') {
+                    alert('密钥错误');
+                } else if (data.status === 'ok') {
+                    isAdmin = true; hasAdminPassword = true; adminToken = data.token;
+                    localStorage.setItem('adminToken', adminToken);
+                    updateAdminUI(); closeAdminModal();
+                    loadLlmHistory(); loadWebSearchHistory();
+                }
+            } catch (e) { alert('验证失败: ' + e.message); }
+        }
+
+        function showAdminSetModal() {
+            document.getElementById('adminOldPwd').value = '';
+            document.getElementById('adminNewPwd').value = '';
+            document.getElementById('adminNewPwd2').value = '';
+            document.getElementById('adminSetModal').classList.add('show');
+            document.getElementById('userDropdown').classList.remove('show');
+        }
+        function closeAdminSetModal() { document.getElementById('adminSetModal').classList.remove('show'); }
+
+        async function adminSetPassword() {
+            const oldPwd = document.getElementById('adminOldPwd').value;
+            const newPwd = document.getElementById('adminNewPwd').value;
+            const newPwd2 = document.getElementById('adminNewPwd2').value;
+            if (!newPwd) { alert('新密钥不能为空'); return; }
+            if (newPwd !== newPwd2) { alert('两次输入的新密钥不一致'); return; }
+            try {
+                const r = await fetch('/api/admin-set-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ old_password: oldPwd, new_password: newPwd })
+                });
+                if (r.ok) {
+                    const data = await r.json();
+                    isAdmin = true; hasAdminPassword = true; adminToken = data.token;
+                    localStorage.setItem('adminToken', adminToken);
+                    updateAdminUI(); closeAdminSetModal();
+                    alert('管理员密钥设置成功！');
+                    loadLlmHistory(); loadWebSearchHistory();
+                } else { const err = await r.json(); alert(err.detail || '设置失败'); }
+            } catch (e) { alert('设置失败: ' + e.message); }
+        }
+
+        async function adminLogout() {
+            try { await fetch('/api/admin-logout', { method: 'POST', headers: { 'X-Admin-Token': adminToken } }); } catch (e) {}
+            isAdmin = false; adminToken = ''; localStorage.removeItem('adminToken');
+            updateAdminUI();
+            document.getElementById('userDropdown').classList.remove('show');
+            loadLlmHistory(); loadWebSearchHistory();
+        }
+
+        async function openLogsModal() {
+            document.getElementById('userDropdown').classList.remove('show');
+            document.getElementById('logsModal').classList.add('show');
+            document.getElementById('logViewerModal').textContent = '加载中...';
+            await refreshLogs();
+        }
+        function closeLogsModal() { document.getElementById('logsModal').classList.remove('show'); }
 
         async function checkWebSearchStatus() {
             try {
@@ -1125,38 +1198,30 @@
                         webSearchConfigured = true;
                         const name = data.active_provider_name || data.active_provider;
                         document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
-                        if (data.active_provider) {
-                            currentProvider = data.active_provider;
-                            selectProvider(currentProvider);
-                        }
+                        document.getElementById('searchDot').className = 'nav-status-dot on';
+                        if (data.active_provider) { currentProvider = data.active_provider; selectProvider(currentProvider); }
                     }
                 }
-            } catch (error) {
-                console.error('获取联网搜索状态失败:', error);
-            }
+            } catch (e) { console.error('获取联网搜索状态失败:', e); }
         }
 
         async function loadLlmHistory() {
             try {
-                const response = await fetch('/api/llm-history');
+                const headers = {};
+                if (adminToken) headers['X-Admin-Token'] = adminToken;
+                const response = await fetch('/api/llm-history', { headers });
                 if (!response.ok) return;
                 const data = await response.json();
+                if (data.need_admin) { document.getElementById('llmHistorySection').style.display = 'none'; return; }
                 const history = data.history || [];
                 const section = document.getElementById('llmHistorySection');
                 const list = document.getElementById('llmHistoryList');
-
-                if (history.length === 0) {
-                    section.style.display = 'none';
-                    return;
-                }
-
+                if (history.length === 0) { section.style.display = 'none'; return; }
                 section.style.display = 'block';
                 list.innerHTML = '';
                 history.forEach((item, index) => {
                     const div = document.createElement('div');
-                    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 10px; margin-bottom:4px; background:#f0f4ff; border-radius:6px; cursor:pointer; font-size:0.82em; transition:background 0.2s;';
-                    div.onmouseenter = () => div.style.background = '#e0e8fa';
-                    div.onmouseleave = () => div.style.background = '#f0f4ff';
+                    div.className = 'history-item';
                     div.innerHTML = `
                         <div style="flex:1; min-width:0;">
                             <div style="font-weight:bold; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.model_name}</div>
@@ -1165,25 +1230,21 @@
                         <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
                             ${item.is_local ? '<span style="color:#e67e22; font-size:0.85em;">本地</span>' : ''}
                             <span style="color:#aaa; font-size:0.85em;">${item.saved_at || ''}</span>
-                            <button onclick="event.stopPropagation(); applyLlmHistory(${index})" style="padding:2px 8px; border:none; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
+                            <button onclick="event.stopPropagation(); applyLlmHistory(${index})" style="padding:2px 8px; border:none; background:#4f46e5; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
                         </div>
                     `;
                     div.onclick = () => applyLlmHistory(index);
                     list.appendChild(div);
                 });
-            } catch (e) {
-                console.error('加载LLM历史失败:', e);
-            }
+            } catch (e) { console.error('加载LLM历史失败:', e); }
         }
 
         async function applyLlmHistory(index) {
             showLoading('应用历史配置...');
             try {
-                const response = await fetch('/api/llm-history-apply', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ index })
-                });
+                const headers = { 'Content-Type': 'application/json' };
+                if (adminToken) headers['X-Admin-Token'] = adminToken;
+                const response = await fetch('/api/llm-history-apply', { method: 'POST', headers, body: JSON.stringify({ index }) });
                 if (response.ok) {
                     const data = await response.json();
                     const config = data.config;
@@ -1192,50 +1253,32 @@
                     document.getElementById('isLocal').checked = config.is_local;
                     llmConfigured = true;
                     document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
-                    localStorage.setItem('llmConfig', JSON.stringify({
-                        api_endpoint: config.api_endpoint,
-                        api_key: '',
-                        model_name: config.model_name,
-                        is_local: config.is_local
-                    }));
+                    document.getElementById('llmDot').className = 'nav-status-dot on';
+                    localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: config.api_endpoint, api_key: '', model_name: config.model_name, is_local: config.is_local }));
                     alert('已应用历史配置: ' + config.model_name);
-                } else {
-                    alert('应用历史配置失败');
-                }
-            } catch (e) {
-                alert('应用失败: ' + e.message);
-            } finally {
-                hideLoading();
-            }
-        }
-
-        function toggleLlmHistory() {
-            const section = document.getElementById('llmHistorySection');
-            section.style.display = section.style.display === 'none' ? 'block' : 'none';
+                } else { alert('应用历史配置失败'); }
+            } catch (e) { alert('应用失败: ' + e.message); }
+            finally { hideLoading(); }
         }
 
         async function loadWebSearchHistory() {
             try {
-                const response = await fetch('/api/web-search-history');
+                const headers = {};
+                if (adminToken) headers['X-Admin-Token'] = adminToken;
+                const response = await fetch('/api/web-search-history', { headers });
                 if (!response.ok) return;
                 const data = await response.json();
+                if (data.need_admin) { document.getElementById('webSearchHistorySection').style.display = 'none'; return; }
                 const history = data.history || [];
                 const section = document.getElementById('webSearchHistorySection');
                 const list = document.getElementById('webSearchHistoryList');
-
-                if (history.length === 0) {
-                    section.style.display = 'none';
-                    return;
-                }
-
+                if (history.length === 0) { section.style.display = 'none'; return; }
                 section.style.display = 'block';
                 list.innerHTML = '';
+                const providerNames = {tavily:'Tavily',serpapi:'SerpAPI',bing:'Bing',google:'Google',brave:'Brave'};
                 history.forEach((item, index) => {
                     const div = document.createElement('div');
-                    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:5px 10px; margin-bottom:3px; background:#e8edfa; border-radius:6px; cursor:pointer; font-size:0.82em; transition:background 0.2s;';
-                    div.onmouseenter = () => div.style.background = '#d5ddf0';
-                    div.onmouseleave = () => div.style.background = '#e8edfa';
-                    const providerNames = {tavily:'Tavily',serpapi:'SerpAPI',bing:'Bing',google:'Google',brave:'Brave'};
+                    div.className = 'history-item';
                     const pName = providerNames[item.provider] || item.provider;
                     div.innerHTML = `
                         <div style="flex:1; min-width:0;">
@@ -1244,24 +1287,20 @@
                         </div>
                         <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
                             <span style="color:#aaa; font-size:0.85em;">${item.saved_at || ''}</span>
-                            <button onclick="event.stopPropagation(); applyWebSearchHistory(${index})" style="padding:2px 8px; border:none; background:#4c6ef5; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
+                            <button onclick="event.stopPropagation(); applyWebSearchHistory(${index})" style="padding:2px 8px; border:none; background:#4f46e5; color:white; border-radius:4px; cursor:pointer; font-size:0.85em;">应用</button>
                         </div>
                     `;
                     div.onclick = () => applyWebSearchHistory(index);
                     list.appendChild(div);
                 });
-            } catch (e) {
-                console.error('加载搜索引擎历史失败:', e);
-            }
+            } catch (e) { console.error('加载搜索引擎历史失败:', e); }
         }
 
         async function applyWebSearchHistory(index) {
             try {
-                const response = await fetch('/api/web-search-history-apply', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ index })
-                });
+                const headers = { 'Content-Type': 'application/json' };
+                if (adminToken) headers['X-Admin-Token'] = adminToken;
+                const response = await fetch('/api/web-search-history-apply', { method: 'POST', headers, body: JSON.stringify({ index }) });
                 if (response.ok) {
                     const data = await response.json();
                     const config = data.config;
@@ -1269,15 +1308,12 @@
                     const providerNames = {tavily:'Tavily',serpapi:'SerpAPI',bing:'Bing',google:'Google',brave:'Brave'};
                     const pName = providerNames[config.provider] || config.provider;
                     document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${pName} 已配置</span>`;
+                    document.getElementById('searchDot').className = 'nav-status-dot on';
                     currentProvider = config.provider;
                     selectProvider(config.provider);
                     alert('已应用历史配置: ' + pName);
-                } else {
-                    alert('应用历史配置失败');
-                }
-            } catch (e) {
-                alert('应用失败: ' + e.message);
-            }
+                } else { alert('应用历史配置失败'); }
+            } catch (e) { alert('应用失败: ' + e.message); }
         }
 
         async function restoreConfigs() {
@@ -1296,10 +1332,10 @@
                     if (response.ok) {
                         llmConfigured = true;
                         document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
+                        document.getElementById('llmDot').className = 'nav-status-dot on';
                     }
                 } catch (e) { console.error('恢复LLM配置失败:', e); }
             }
-
             const webConfig = JSON.parse(localStorage.getItem('webSearchConfig') || 'null');
             if (webConfig && webConfig.provider) {
                 currentProvider = webConfig.provider;
@@ -1315,17 +1351,32 @@
                         const data = await response.json();
                         const name = data.active_provider || webConfig.provider;
                         document.getElementById('webSearchStatus').innerHTML = `<span class="status-indicator connected"></span><span>${name} 已配置</span>`;
+                        document.getElementById('searchDot').className = 'nav-status-dot on';
                     }
                 } catch (e) { console.error('恢复联网搜索配置失败:', e); }
             }
         }
 
         selectProvider('tavily');
-        setInterval(refreshLogs, 5000);
-        refreshLogs();
         restoreConfigs();
-        loadLlmHistory();
-        loadWebSearchHistory();
+        (async function() {
+            try {
+                const r = await fetch('/api/admin-status');
+                if (r.ok) { const data = await r.json(); hasAdminPassword = data.has_password; }
+            } catch (e) {}
+            const savedToken = localStorage.getItem('adminToken');
+            if (savedToken) {
+                adminToken = savedToken;
+                try {
+                    const r = await fetch('/api/admin-status', { headers: { 'X-Admin-Token': adminToken } });
+                    if (r.ok) { const data = await r.json(); isAdmin = data.is_admin; }
+                } catch (e) {}
+                if (!isAdmin) { adminToken = ''; localStorage.removeItem('adminToken'); }
+            }
+            updateAdminUI();
+            loadLlmHistory();
+            loadWebSearchHistory();
+        })();
     </script>
 </body>
 </html>
