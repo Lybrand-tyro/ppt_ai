@@ -11,6 +11,8 @@ PPT AI 是一个基于 LLM 的智能 PPT 生成器，用户输入主题后自动
   - 多种联网搜索引擎增强内容质量
   - 多场景主题风格（通用/科技/商务/教育/旅游/科学）
   - 前端实时预览 + 一键下载
+  - SSE 实时进度推送 + 任务取消
+  - 管理员鉴权 + 配置历史管理
 
 
 二、项目结构
@@ -20,43 +22,57 @@ ppt_ai/
 ├── requirements.txt        # Python 依赖
 ├── web/
 │   └── index.html          # 前端单页应用
+├── logs/                   # 日志文件目录（运行时自动创建）
+├── admin_config.json       # 管理员密码哈希
+├── llm_history.json        # LLM 配置历史（最多20条）
+├── web_search_history.json # 搜索引擎配置历史（最多20条）
 └── src/
     ├── __init__.py
     ├── main.py             # FastAPI 主程序，定义所有 API 端点
     ├── llm_service.py      # LLM 服务 + 联网搜索服务
     ├── ppt_service.py      # PPT 生成服务（HTML / PPTX）
-    └── logger.py           # 日志模块
+    ├── progress.py         # 进度跟踪服务（SSE + 取消）
+    └── logger.py           # 日志模块（去重过滤 + 磁盘持久化）
 
 
 三、核心业务流程
 ----------------
 
 流程一：生成大纲
-  用户输入主题 → 前端调用 /api/generate-outline
+  用户输入主题 → 前端创建任务(/api/create-task) → 调用 /api/generate-outline
     → 判断是否启用 LLM：
-      ├─ 是 → LLMService.generate_outline()
+      ├─ 是 → LLMService.generate_outline(topic, language, use_web_search, task_id)
       │       ├─ 若开启联网搜索 → WebSearchService.search_for_content() 获取参考资料
       │       │                     └─ 将搜索结果注入 LLM prompt
-      │       └─ 调用 LLM API → 解析 JSON 响应 → 返回大纲
-      └─ 否 → 使用内置模板生成大纲
+      │       └─ _call_llm(prompt, task_id) → 流式读取 SSE → 解析 JSON → 返回大纲
+      │             └─ 支持3次重试、任务取消检查、401/403/404 详细错误提示
+      └─ 否 → 使用内置模板 _generate_template_outline() 生成大纲
+    → progress_tracker 实时推送进度到前端（SSE 端点 /api/progress/{task_id}）
     → 返回大纲 JSON 给前端展示和编辑
+    → 前端可随时通过 /api/cancel/{task_id} 取消任务
 
 流程二：生成 PPT
-  用户编辑大纲后点击"生成PPT" → 前端调用 /api/generate-slides
-    → PPTService.generate_html()
+  用户编辑大纲后点击"生成PPT" → 前端创建任务 → 调用 /api/generate-slides
+    → PPTService.generate_html(outline, scenario, use_llm, use_web_search, task_id)
       → 遍历每张幻灯片：
         ├─ content 类型 + 启用 LLM → LLMService.generate_content()
-        │   └─ 若开启联网搜索 → 再次搜索该幻灯片主题的补充资料
+        │   ├─ 若开启联网搜索 → 再次搜索该幻灯片主题的补充资料
+        │   └─ progress_tracker 逐页推送进度
         └─ 其他类型（title/agenda/thankyou）→ 直接使用大纲数据
+      → 根据 style.layout 选择布局生成 HTML：
+        ├─ centered / left / two-column / quote / cards / timeline
+        └─ 根据 style.content_style 选择内容样式：
+           ├─ bullet（要点列表）/ numbered（编号列表）/ highlight（关键词突出）
       → 内容幻灯片按 3 个要点/页拆分
       → 生成 CSS + HTML + JavaScript 完整页面
     → 返回 HTML 给前端 iframe 预览
 
 流程三：下载 PPTX
   用户点击"下载PPTX" → 前端调用 /api/download-pptx
-    → PPTService.generate_pptx()
+    → PPTService.generate_pptx(outline, scenario, use_llm, use_web_search)
       → 同流程二的内容生成逻辑
-      → 使用 python-pptx 库生成 .pptx 文件
+      → 使用 python-pptx 库生成 .pptx 文件（16:9 宽屏）
+      → 同样支持6种 layout + 场景配色
     → 返回文件流下载
 
 
@@ -70,23 +86,67 @@ ppt_ai/
   职责：调用 OpenAI 兼容的 LLM API 生成大纲和内容
   配置：api_endpoint / api_key / model_name / is_local
 
-  generate_outline(topic, language, use_web_search)
-    → 构建大纲 prompt（含联网搜索上下文）
-    → 调用 LLM API
-    → 解析 JSON 响应（支持 ```json 包裹、多余文本容错）
-    → 失败时回退到模板生成
+  静态方法 _normalize_endpoint(endpoint)
+    → 自动补全 API 端点路径，支持多种输入格式：
+      - /v1/chat/completions → 保持不变
+      - /v1 → 追加 /chat/completions
+      - 其他 → 追加 /v1/chat/completions
 
-  generate_content(slide_title, slide_type, topic, language, use_web_search)
-    → 构建内容 prompt（含联网搜索上下文）
-    → 调用 LLM API
-    → 返回 bullet point 格式内容
-    → 失败时回退到模板生成
+  configure(api_endpoint, api_key, model_name, is_local=False)
+    → 自动标准化端点路径，保存配置，设置 is_configured=True
 
-  _call_llm(prompt)
-    → POST 请求到配置的 API 端点
-    → 支持 Bearer Token 认证
-    → 超时 120 秒
-    → 解析 choices[0].message.content
+  generate_outline(topic, language, use_web_search, task_id)
+    → 构建大纲 prompt（含联网搜索上下文 + 样式设计要求）
+    → 若 use_web_search → 调用 web_search_service.search_for_content()
+    → 调用 _call_llm(prompt, task_id)
+    → 通过 _extract_json() 解析响应（支持 ```json 包裹、多余文本容错）
+    → 返回 {title, slides[], metadata} 结构
+    → 失败时回退到 _generate_template_outline()
+
+  generate_content(slide_title, slide_type, topic, language, use_web_search, task_id)
+    → 构建内容 prompt（含联网搜索上下文 + 格式要求）
+    → 若 use_web_search → 调用 web_search_service.search_for_content()
+    → 调用 _call_llm(prompt, task_id)
+    → 返回 bullet point / numbered / highlight 格式内容
+    → 失败时回退到 _generate_template_content()
+
+  _call_llm(prompt, task_id)
+    → 流式响应（stream=True），本地模型自动切换为非流式
+    → 3 次重试机制
+    → 详细错误分类：
+      ├─ 401 → "API密钥无效或已过期"
+      ├─ 403 → "无权限访问该模型"
+      ├─ 404 → "API端点或模型不存在"
+      ├─ Timeout → 超时 + 本地模型诊断建议
+      └─ ConnectionError → 自动重试
+    → 逐行解析 SSE data: 流，拼接完整响应
+    → 响应过程中持续检查 is_cancelled(task_id)
+
+  _parse_outline_response(response) / _parse_content_response(response)
+    → 大纲：通过 _extract_json() 提取并解析 JSON
+    → 内容：直接返回 strip 后的文本
+
+  _extract_json(text)
+    → 去除 ```json / ``` 包裹
+    → 查找首个 { 和末个 } 提取 JSON 子串
+
+  _build_outline_prompt(topic, language, web_context)
+    → 中文/英文双语 prompt
+    → 包含 style 字段设计指导（6种 layout + accent_color + icon + content_style）
+    → 格式校验要求（6-10页、纯JSON）
+
+  _build_content_prompt(slide_title, slide_type, topic, language, web_context)
+    → 中文/英文双语 prompt
+    → 3-5 个具体要点
+    → 支持 bullet/numbered/highlight 三种输出格式
+
+  _generate_template_outline(topic, language)
+    → 6 页固定模板：标题 → 目录 → 引言 → 主要内容 → 案例分析 → 谢谢
+    → 中英文双语支持
+
+  _generate_template_content(slide_title, topic)
+    → 按常见标题名返回预设模板内容
+    → 未匹配时返回通用模板
 
 
 4.2 联网搜索服务 (llm_service.py)
@@ -94,99 +154,230 @@ ppt_ai/
 
 架构：策略模式
   抽象基类：WebSearchProvider
-    - get_name() / configure() / is_configured() / search()
-    - search_for_content() 默认实现：搜索 → 提取 answer 或拼接 results.content
+    - get_name() / configure(**kwargs) / is_configured() / search(query, max_results)
+    - search_for_content(query, language) → 默认实现：搜索3条结果
+      → 优先提取 answer 字段 → 退化为拼接 results[].content
 
   具体实现：
-    ┌──────────┬──────────────────────────────┬────────────┐
-    │ 引擎     │ API 端点                      │ 免费额度    │
-    ├──────────┼──────────────────────────────┼────────────┤
-    │ Tavily   │ https://api.tavily.com/search │ 1000次/月  │
-    │ SerpAPI  │ https://serpapi.com/search    │ 100次/月   │
-    │ Bing     │ Azure Bing Search API v7      │ 1000次/月  │
-    │ Google   │ Custom Search API             │ 100次/天   │
-    │ Brave    │ Brave Search API              │ 2000次/月  │
-    └──────────┴──────────────────────────────┴────────────┘
+    ┌──────────┬────────────────────────────────────────┬────────────┬──────────────────────────┐
+    │ 引擎     │ API 端点                                │ 免费额度    │ 额外配置                  │
+    ├──────────┼────────────────────────────────────────┼────────────┼──────────────────────────┤
+    │ Tavily   │ https://api.tavily.com/search           │ 1000次/月  │ api_key                   │
+    │ SerpAPI  │ https://serpapi.com/search              │ 100次/月   │ api_key                   │
+    │ Bing     │ Azure Bing Search API v7                │ 1000次/月  │ api_key                   │
+    │ Google   │ Custom Search API                       │ 100次/天   │ api_key + cx             │
+    │ Brave    │ Brave Search API                        │ 2000次/月  │ api_key                   │
+    └──────────┴────────────────────────────────────────┴────────────┴──────────────────────────┘
 
   统一入口：WebSearchService
-    - 管理所有 provider 实例
-    - 运行时切换活跃搜索引擎
-    - configure_provider(key, **kwargs) → 配置并激活
-    - search(query) → 委托给活跃 provider
-    - search_for_content(slide_title, topic, language) → 为幻灯片搜索补充资料
-    - get_provider_status() → 返回所有引擎配置状态
+    - PROVIDERS 注册表 → 懒加载所有 provider 实例
+    - active_provider 属性 ← 跟踪当前活跃引擎
+    - configure_provider(key, **kwargs) → 配置并激活指定引擎
+    - is_configured() → 检查活跃引擎是否已配置
+    - get_active_provider_name() → 获取活跃引擎的可读名称
+    - search(query, max_results=5) → 委托给活跃 provider
+    - search_for_content(slide_title, topic, language) → 构建搜索查询
+      → 中文："{topic} {slide_title} 介绍 分析"
+      → 英文："{topic} {slide_title} introduction analysis"
+      → 委托给 provider.search_for_content()
+    - get_provider_status() → 返回所有引擎 {name, is_configured, is_active}
+
+  全局实例：web_search_service = WebSearchService()
 
 
 4.3 PPT 生成服务 (ppt_service.py)
 ──────────────────────────────────
 
 类：PPTService
-  场景配置：
-    general    → #2E86AB 蓝色
-    technology → #3498DB 科技蓝
-    business   → #27AE60 商务绿
-    education  → #9B59B6 教育紫
-    tourism    → #E67E22 旅游橙
-    science    → #1ABC9C 科学青
+  场景配置（16:9 宽屏 13.333"×7.5"）：
+    ┌────────────┬──────────┬───────────────────────────┐
+    │ 场景       │ 主题色    │ 字体                       │
+    ├────────────┼──────────┼───────────────────────────┤
+    │ general    │ #2E86AB  │ Microsoft YaHei, sans-serif│
+    │ technology │ #3498DB  │ Consolas, monospace        │
+    │ business   │ #27AE60  │ Microsoft YaHei, sans-serif│
+    │ education  │ #9B59B6  │ Microsoft YaHei, sans-serif│
+    │ tourism    │ #E67E22  │ Microsoft YaHei, sans-serif│
+    │ science    │ #1ABC9C  │ Microsoft YaHei, sans-serif│
+    └────────────┴──────────┴───────────────────────────┘
 
-  generate_html(outline, scenario, use_llm, use_web_search)
-    → 遍历幻灯片 → LLM 生成内容 → 拆分要点 → 生成 HTML
-    → 输出：完整 HTML 页面（CSS + JS + 幻灯片导航）
+  === HTML 生成 ===
 
-  generate_pptx(outline, scenario, use_llm, use_web_search)
-    → 同上逻辑 → 使用 python-pptx 生成 .pptx
-    → 输出：字节流
-
-  _expand_slide_with_template(slide, topic)
-    → 将超过 3 个要点的幻灯片拆分为多页
-
-  _generate_slide_html(slide, config)
-    → 根据类型生成：title / agenda / content / thankyou
+  generate_html(outline, scenario, use_llm, use_web_search, task_id) [async]
+    → 遍历幻灯片 → LLM 生成 content 类型内容
+    → progress_tracker 逐页推送进度
+    → 支持 is_cancelled() 中断检查
+    → _expand_slide_with_template(): content 页 >3 要点时拆分为多页
+    → _generate_slide_html(): 根据 slide.type + style.layout 选择模板
+      ├─ title → 全屏渐变背景、居中标题/副标题/emoji
+      ├─ agenda → 左侧色条、emoji + 标题 + 要点列表
+      ├─ thankyou → 渐变背景、居中致谢
+      └─ content → 根据 layout 分发：
+         ├─ centered → 居中大文字
+         ├─ left → 左对齐要点列表
+         ├─ two-column → 双栏对比
+         ├─ quote → 引用风格（大引号 + 斜体 + 来源）
+         ├─ cards → 2×2 卡片网格（编号 + 文字）
+         └─ timeline → 时间线（竖线 + 圆点 + 步骤）
+    → _render_content_html(content, content_style)
+      ├─ bullet → 标准 • 要点列表
+      ├─ numbered → 圆形数字编号列表
+      └─ highlight → 左侧色条高亮块 + **关键词**着色
+    → 输出：完整 HTML 页面（内联 CSS + JS 幻灯片导航）
+    → 支持键盘操作（← → 空格）
 
   _generate_css_styles(config)
-    → 生成完整 CSS（含导航栏、幻灯片动画）
+    → 生成完整 CSS（1280×720 容器 + 6种布局样式 + 3种内容样式 + 导航栏）
 
-  _build_title_slide / _build_agenda_slide / _build_content_slide / _build_thankyou_slide
-    → python-pptx 版本的各类型幻灯片构建
+  _clean_markdown(text) [static]
+    → 转换 **粗体** 为 <strong>
+    → 移除 LaTeX 标记（$$、$、\[ \]、\( \)）
+    → 移除多余的花括号和反斜杠命令
+
+  _parse_bullet_points(content)
+    → 按换行拆分，自动补全 • 前缀
+    → 返回纯要点列表
+
+  === PPTX 生成 ===
+
+  generate_pptx(outline, scenario, use_llm, use_web_search)
+    → 同上内容生成逻辑
+    → 使用 python-pptx (slide_width=13.333", slide_height=7.5")
+    → 4种基础幻灯片构建：
+      ├─ _build_title_slide → 全色背景 + emoji + 居中标题/副标题
+      ├─ _build_agenda_slide → 浅灰背景 + 左侧色条 + 要点列表
+      ├─ _build_thankyou_slide → 全色背景 + 居中致谢
+      └─ _build_content_slide_ex → 通过 style.layout 选择布局：
+         ├─ _layout_left → 左对齐 • 要点
+         ├─ _layout_centered → 居中要点
+         ├─ _layout_quote → 大引号 + 引用文字
+         ├─ _layout_two_column → 双色块 + 分栏要点
+         ├─ _layout_cards → 4卡片（圆角矩形 + 编号圆圈 + 文字）
+         └─ _layout_timeline → 水平线 + 圆点 + 步骤编号 + 描述文字
+    → _clean_md(text) → PPTX 版 markdown 清理（含 HTML 实体解码）
+
+  辅助方法：
+    _hex_to_rgb(hex) → 十六进制颜色转 RGBColor
+    _lighten_color(rgb, factor=0.85) → 颜色变浅
+    _add_shape / _add_rounded_rect / _add_circle → 形状添加封装
+    _add_text / _add_bullet_text → 文本添加封装
 
 
-4.4 FastAPI 主程序 (main.py)
+4.4 进度跟踪服务 (progress.py)
+───────────────────────────────
+
+类：ProgressTracker
+  职责：管理生成任务的生命周期，通过 SSE 向前端推送实时进度
+
+  _tasks: Dict[str, Dict] [线程安全 + threading.Lock]
+    每条任务 {status, progress(0-100), message, cancelled(bool), steps[]}
+
+  create_task() → uuid4[:8] → 返回 task_id
+  update(task_id, progress, message, step) → 更新进度/消息/步骤
+  complete(task_id, message) → progress=100, status="completed"
+  fail(task_id, message) → status="failed"
+  cancel(task_id) → cancelled=True, status="cancelled"
+  is_cancelled(task_id) → bool (供各服务轮询检查)
+  get_status(task_id) → {task_id, status, progress, message, steps[-5:]}
+  cleanup(task_id) → 移除已完成任务的记录
+
+  全局实例：progress_tracker = ProgressTracker()
+
+  SSE 端点：GET /api/progress/{task_id}
+    → 每 0.3s 推送一次状态（仅变更时）
+    → status 为 completed/failed/cancelled/not_found 时自动停止 + cleanup
+
+
+4.5 日志模块 (logger.py)
+─────────────────────────
+
+类：Logger（单例）
+  职责：统一日志管理，支持去重过滤和磁盘持久化
+
+  _DedupFilter:
+    - 线程安全的日志去重过滤器
+    - 同一 (level, message) 重复超过 2 次则丢弃
+    - reset(key) 可重置特定去重计数
+
+  _setup_logger():
+    - DEBUG 级别控制台输出（自动处理编码）/ 文件输出
+    - 日志文件按日期命名：logs/ppt_ai_YYYYMMDD.log
+    - 格式：[YYYY-MM-DD HH:MM:SS] [LEVEL] [ppt_ai] message
+
+  debug/info/error/warning(message)
+    → 每次调用前 reset() 去重过滤器，确保非循环日志正常输出
+
+  全局实例：logger = Logger()
+
+
+4.6 FastAPI 主程序 (main.py)
 ────────────────────────────
 
-API 端点：
-  POST /api/configure-llm          → 配置 LLM（端点/密钥/模型/是否本地）
-  GET  /api/llm-status             → 获取 LLM 配置状态
+管理员鉴权：
+  - POST /api/admin-login          → 密码验证，返回 token
+  - POST /api/admin-set-password   → 首次设置/修改管理员密码
+  - GET  /api/admin-status         → 密码是否已设置 + 当前是否已登录
+  - POST /api/admin-logout         → 登出，销毁 token
+  - 鉴权方式：请求头 X-Admin-Token + 内存 token 池（SHA256 密码哈希）
 
-  POST /api/configure-web-search   → 配置联网搜索（引擎类型 + 密钥）
-  GET  /api/web-search-status      → 获取所有搜索引擎状态
-  POST /api/web-search             → 执行联网搜索
+LLM 配置：
+  - POST /api/configure-llm        → 配置 LLM（端点/密钥/模型/是否本地）
+  - GET  /api/llm-status           → 获取 LLM 配置状态
+  - GET  /api/llm-history          → 获取配置历史（需管理员，含完整 api_key）
+  - POST /api/llm-history-apply    → 应用历史配置（需管理员，按索引选择）
 
-  POST /api/generate-outline       → 生成大纲
-  POST /api/generate-slides        → 生成 PPT HTML
-  POST /api/download-pptx          → 下载 PPTX 文件
+联网搜索配置：
+  - POST /api/configure-web-search → 配置联网搜索（引擎类型 + 密钥 + Google 需 cx）
+  - GET  /api/web-search-status    → 获取所有搜索引擎状态
+  - POST /api/web-search           → 执行联网搜索
+  - GET  /api/web-search-history   → 获取搜索配置历史（需管理员，含完整 api_key）
+  - POST /api/web-search-history-apply → 应用历史搜索配置（需管理员）
 
-  GET  /api/logs                   → 获取日志
-  GET  /                           → 首页（index.html）
+任务进度：
+  - POST /api/create-task          → 创建进度跟踪任务，返回 task_id
+  - GET  /api/progress/{task_id}   → SSE 实时进度推送（每 0.3s）
+  - POST /api/cancel/{task_id}     → 取消任务
+
+PPT 生成：
+  - POST /api/generate-outline     → 生成大纲（含 task_id 进度跟踪）
+  - POST /api/generate-slides      → 生成 PPT HTML（含 task_id 进度跟踪）
+  - POST /api/download-pptx        → 下载 PPTX 文件（UTF-8 编码文件名）
+
+日志（需管理员）：
+  - GET  /api/logs?lines=100       → 读取当天日志文件最后 N 行
+
+首页：
+  - GET  /                         → 返回 index.html
 
 
-4.5 前端 (index.html)
+4.7 前端 (index.html)
 ─────────────────────
 
 页面布局：左右双栏
   左栏：
     - 主题输入 + 语言选择
+    - 场景选择（general/technology/business/education/tourism/science）
     - 联网搜索开关 + 可折叠搜索引擎配置面板
-    - LLM 配置区
+    - LLM 配置区 + 可折叠历史配置面板
+    - LLM 启用/禁用开关
   右栏：
-    - 大纲编辑器
+    - 大纲编辑器（可手动编辑 JSON）
     - PPT 预览 iframe
   底部：
-    - 日志查看器（可折叠）
+    - 日志查看器（可折叠，需管理员登录）
+
+进度显示：
+  - 进度条 + 百分比 + 状态消息
+  - 支持取消按钮
 
 配置持久化：
   - localStorage 存储 LLM 配置和搜索引擎配置
   - 页面加载时自动恢复：回填表单 + 发送到后端配置
   - 切换搜索引擎时自动回填已保存的 API 密钥
+
+管理员功能：
+  - 密钥设置/验证弹窗
+  - 配置历史面板（查看 + 一键应用）
 
 
 五、数据流
@@ -195,49 +386,75 @@ API 端点：
 用户输入主题
     │
     ▼
-┌─────────────────────────┐
-│  /api/generate-outline  │
-│  ┌───────────────────┐  │
-│  │ use_llm=true?     │──┼── 否 ──→ 模板大纲
-│  │ use_web_search?   │  │
-│  └───────┬───────────┘  │
-│          │是             │
-│          ▼               │
-│  WebSearchService        │
-│  .search_for_content()   │
-│          │               │
-│          ▼               │
-│  LLMService              │
-│  .generate_outline()     │
-│  (prompt + 搜索上下文)    │
-│          │               │
-│          ▼               │
-│  解析 JSON 大纲          │
-└─────────────────────────┘
+┌─────────────────────────────────┐
+│  前端 POST /api/create-task      │ → task_id
+│  前端 GET  /api/progress/{id}   │ → SSE 连接（实时进度）      │
+└─────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────┐
+│  POST /api/generate-outline     │
+│  ┌───────────────────────────┐  │
+│  │ use_llm=true?             │──┼── 否 ──→ _generate_template_outline
+│  │ use_web_search?           │  │
+│  └───────┬───────────────────┘  │
+│          │是                     │
+│          ▼                       │
+│  progress_tracker.update(10%)   │ ← "🔍 联网搜索参考资料..."
+│          │                       │
+│          ▼                       │
+│  WebSearchService                │
+│  .search_for_content()           │
+│          │                       │
+│          ▼                       │
+│  progress_tracker.update(30%)   │ ← "📝 构建提示词..."
+│          │                       │
+│          ▼                       │
+│  LLMService._call_llm()         │ ← 流式 SSE，带重试+取消检查
+│  .generate_outline()             │
+│          │                       │
+│          ▼                       │
+│  progress_tracker.update(80%)   │ ← "📋 解析大纲..."
+│          │                       │
+│          ▼                       │
+│  _extract_json() → 解析大纲      │
+│          │                       │
+│          ▼                       │
+│  progress_tracker.complete()    │ ← "✅ 大纲生成完成"
+└─────────────────────────────────┘
     │
     ▼
 前端展示大纲（可编辑）
     │
     ▼
-┌─────────────────────────┐
-│  /api/generate-slides   │
-│  ┌───────────────────┐  │
-│  │ 遍历每张幻灯片     │  │
-│  │  ├─ content类型   │  │
-│  │  │  ├─ LLM生成   │  │
-│  │  │  │  └─ +搜索  │  │
-│  │  │  └─ 拆分要点  │  │
-│  │  └─ 其他类型      │  │
-│  │     └─ 直接使用  │  │
-│  └───────────────────┘  │
-│          │               │
-│          ▼               │
-│  生成 HTML/CSS/JS        │
-└─────────────────────────┘
+┌─────────────────────────────────┐
+│  POST /api/generate-slides       │
+│  ┌───────────────────────────┐  │
+│  │ 遍历每张幻灯片             │  │
+│  │  ├─ content类型 + LLM     │  │
+│  │  │  ├─ 联网搜索(可选)     │  │
+│  │  │  ├─ LLM生成内容        │  │
+│  │  │  └─ progress 逐页推送  │  │
+│  │  ├─ _expand_slide_with_   │  │
+│  │  │   template (3要点/页)  │  │
+│  │  └─ _generate_slide_html  │  │
+│  │     └─ 6种 layout 分发    │  │
+│  └───────────────────────────┘  │
+│          │                       │
+│          ▼                       │
+│  _generate_css_styles + HTML     │
+│  + JAVASCRIPT_CODE               │
+│          │                       │
+│          ▼                       │
+│  progress_tracker.complete()    │ ← "✅ PPT生成完成"
+└─────────────────────────────────┘
     │
     ▼
 前端 iframe 预览
     │
     ├──→ 下载 HTML
     │
-    └──→ /api/download-pptx → python-pptx 生成 → 文件下载
+    └──→ POST /api/download-pptx
+         → progress_tracker 进度跟踪
+         → python-pptx 生成（6种 layout）
+         → StreamingResponse 文件下载
