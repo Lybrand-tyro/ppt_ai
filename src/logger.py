@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 import io
 
+
 class _DedupFilter(logging.Filter):
     def __init__(self):
         super().__init__()
@@ -26,6 +27,7 @@ class _DedupFilter(logging.Filter):
                 self._last_msg.pop(key, None)
             else:
                 self._last_msg.clear()
+
 
 class Logger:
     _instance: 'Logger | None' = None
@@ -74,27 +76,24 @@ class Logger:
 
     def debug(self, message: str):
         if self._logger is not None:
-            self._dedup_filter.reset()
             self._logger.debug(message)
 
     def info(self, message: str):
         if self._logger is not None:
-            self._dedup_filter.reset()
             self._logger.info(message)
 
     def error(self, message: str):
         if self._logger is not None:
-            self._dedup_filter.reset()
             self._logger.error(message)
 
     def warning(self, message: str):
         if self._logger is not None:
-            self._dedup_filter.reset()
             self._logger.warning(message)
 
     @property
     def logger(self) -> logging.Logger:
         assert self._logger is not None
         return self._logger
+
 
 logger = Logger()

@@ -4,15 +4,55 @@ PPT生成服务模块
 """
 
 import io
+import os
+import re
 from typing import Dict, Any, List
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from .llm_service import llm_service, web_search_service
+from .llm_service import llm_service
+from .search_service import web_search_service
 from .logger import logger
 
-JAVASCRIPT_CODE = """
+_SLIDE_WIDTH = Inches(13.333)
+_SLIDE_HEIGHT = Inches(7.5)
+_POINTS_PER_SLIDE = 3
+
+_PPTX_LAYOUT = {
+    "title_font_size": Pt(44),
+    "title_center_font_size": Pt(44),
+    "subtitle_font_size": Pt(24),
+    "heading_font_size": Pt(36),
+    "content_title_font_size": Pt(32),
+    "body_font_size": Pt(18),
+    "body_font_size_lg": Pt(20),
+    "body_font_size_sm": Pt(16),
+    "body_font_size_xs": Pt(14),
+    "icon_font_size": Pt(48),
+    "icon_font_size_sm": Pt(28),
+    "icon_font_size_xs": Pt(24),
+    "quote_font_size": Pt(72),
+    "quote_text_font_size": Pt(24),
+    "timeline_num_font_size": Pt(28),
+    "card_num_font_size": Pt(18),
+    "top_bar_height": Inches(0.08),
+    "bottom_bar_height": Inches(0.08),
+    "left_stripe_width": Inches(0.15),
+    "accent_stripe_width": Inches(0.08),
+    "title_top": Inches(2.2),
+    "title_top_no_icon": Inches(2.5),
+    "content_top": Inches(1.6),
+    "content_top_with_subtitle": Inches(2.0),
+    "max_body_lines": 6,
+    "max_body_lines_centered": 5,
+    "max_body_lines_column": 5,
+    "max_card_items": 4,
+    "max_timeline_items": 5,
+    "max_agenda_items": 6,
+}
+
+_JS_TEMPLATE = r"""
 let slideCurrent = 0;
 let slideTotal = 7;
 
@@ -57,6 +97,38 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 """
 
+
+def _clean_markdown(text: str, keep_html: bool = False) -> str:
+    """统一 Markdown 清理
+
+    Args:
+        text: 输入文本
+        keep_html: True 时 **粗体** 转为 <strong>（HTML 用），False 时直接移除 **（PPTX 用）
+    """
+    if keep_html:
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong class="highlight-keyword">\1</strong>', text)
+    else:
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = text.replace('**', '')
+
+    if not keep_html:
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('&nbsp;', ' ')
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+
+    text = re.sub(r'\$\$([\s\S]*?)\$\$', r'\1', text)
+    text = re.sub(r'\$([^$\n]+?)\$', r'\1', text)
+    text = re.sub(r'\\\[([\s\S]*?)\\\]', r'\1', text)
+    text = re.sub(r'\\\(([\s\S]*?)\\\)', r'\1', text)
+    text = re.sub(r'\\[a-zA-Z]+\{([^{}]*)\}', r'\1', text)
+    text = re.sub(r'\\[a-zA-Z]+', '', text)
+    text = re.sub(r'[\{\}]', '', text)
+    return text
+
+
 class PPTService:
     """PPT生成服务"""
 
@@ -94,19 +166,72 @@ class PPTService:
             }
         }
 
-    async def generate_html(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False, use_web_search: bool = False, task_id: str = "") -> str:
-        """生成HTML格式的PPT
-
-        Args:
-            outline: 大纲数据
-            scenario: 应用场景
-            use_llm: 是否使用LLM生成内容
-            use_web_search: 是否使用联网搜索增强
-            task_id: 进度跟踪任务ID
+    def _prepare_slide_content(self, slide: Dict[str, Any], topic: str, language: str,
+                                use_llm: bool, use_web_search: bool, task_id: str,
+                                slide_idx: int, total_count: int) -> Dict[str, Any]:
+        """公共内容准备逻辑：LLM 生成 + 联网搜索 + 取消检查
 
         Returns:
-            HTML字符串
+            enriched slide dict
         """
+        from .progress import progress_tracker
+
+        enriched = slide.copy()
+        slide_type = slide.get("type", "content")
+        title = slide.get("title", "")
+
+        if task_id and progress_tracker.is_cancelled(task_id):
+            return enriched
+
+        if slide_type == "content" and use_llm and llm_service.is_configured:
+            progress_msg = f"📝 生成第 {slide_idx+1}/{total_count} 页: {title}"
+            progress_pct = 30 + int(60 * slide_idx / max(total_count, 1))
+            progress_tracker.update(task_id, progress_pct, progress_msg, f"gen_slide_{slide_idx}")
+            logger.info(f"使用LLM生成幻灯片内容: {title}")
+            try:
+                import asyncio
+                content = asyncio.get_event_loop().run_in_executor(
+                    None, llm_service.generate_content,
+                    title, slide_type, topic, language, use_web_search, task_id
+                )
+            except Exception:
+                pass
+
+        return enriched
+
+    async def _prepare_slide_content_async(self, slide: Dict[str, Any], topic: str, language: str,
+                                            use_llm: bool, use_web_search: bool, task_id: str,
+                                            slide_idx: int, total_count: int) -> Dict[str, Any]:
+        """异步版公共内容准备逻辑"""
+        from .progress import progress_tracker
+
+        enriched = slide.copy()
+        slide_type = slide.get("type", "content")
+        title = slide.get("title", "")
+
+        if task_id and progress_tracker.is_cancelled(task_id):
+            return enriched
+
+        if slide_type == "content" and use_llm and llm_service.is_configured:
+            progress_msg = f"📝 生成第 {slide_idx+1}/{total_count} 页: {title}"
+            progress_pct = 30 + int(60 * slide_idx / max(total_count, 1))
+            progress_tracker.update(task_id, progress_pct, progress_msg, f"gen_slide_{slide_idx}")
+            logger.info(f"使用LLM生成幻灯片内容: {title}")
+            try:
+                import asyncio
+                content = await asyncio.to_thread(
+                    llm_service.generate_content, title, slide_type, topic, language, use_web_search, task_id
+                )
+                enriched["content"] = content
+                logger.info(f"LLM内容生成成功: {title}")
+            except Exception as e:
+                logger.error(f"LLM内容生成失败: {e}")
+
+        return enriched
+
+    async def generate_html(self, outline: Dict[str, Any], scenario: str = "general",
+                            use_llm: bool = False, use_web_search: bool = False,
+                            task_id: str = "") -> str:
         from .progress import progress_tracker
 
         logger.info(f"开始生成HTML PPT: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
@@ -120,29 +245,12 @@ class PPTService:
         total_slides_count = len(outline.get("slides", []))
 
         for slide_idx, slide in enumerate(outline.get("slides", [])):
-            slide_type = slide.get("type", "content")
-            title = slide.get("title", "")
-            enriched_slide = slide.copy()
+            enriched_slide = await self._prepare_slide_content_async(
+                slide, topic, language, use_llm, use_web_search, task_id,
+                slide_idx, total_slides_count
+            )
 
-            if task_id and progress_tracker.is_cancelled(task_id):
-                break
-
-            if slide_type == "content" and use_llm and llm_service.is_configured:
-                progress_msg = f"📝 生成第 {slide_idx+1}/{total_slides_count} 页: {title}"
-                progress_pct = 30 + int(60 * slide_idx / max(total_slides_count, 1))
-                progress_tracker.update(task_id, progress_pct, progress_msg, f"gen_slide_{slide_idx}")
-                logger.info(f"使用LLM生成幻灯片内容: {title}")
-                try:
-                    import asyncio
-                    content = await asyncio.to_thread(
-                        llm_service.generate_content, title, slide_type, topic, language, use_web_search, task_id
-                    )
-                    enriched_slide["content"] = content
-                    logger.info(f"LLM内容生成成功: {title}")
-                except Exception as e:
-                    logger.error(f"LLM内容生成失败: {e}")
-
-            if slide_type == "content":
+            if enriched_slide.get("type") == "content":
                 expanded_slides = self._expand_slide_with_template(enriched_slide, topic)
                 for exp_slide in expanded_slides:
                     exp_slide["id"] = slide_id
@@ -181,7 +289,7 @@ class PPTService:
     </div>
 
     <script>
-        {JAVASCRIPT_CODE}
+        {_JS_TEMPLATE}
         initSlides({total_slides});
     </script>
 </body>
@@ -191,22 +299,20 @@ class PPTService:
         return complete_html
 
     def _expand_slide_with_template(self, slide: Dict[str, Any], _topic: str) -> List[Dict[str, Any]]:
-        """使用模板扩展内容幻灯片"""
         title = slide.get("title", "")
         content = slide.get("content", "")
         style = slide.get("style", {})
 
         points = self._parse_bullet_points(content)
         slides = []
-        points_per_slide = 3
 
-        for i in range(0, len(points), points_per_slide):
-            chunk = points[i:i + points_per_slide]
+        for i in range(0, len(points), _POINTS_PER_SLIDE):
+            chunk = points[i:i + _POINTS_PER_SLIDE]
             if chunk:
                 slides.append({
                     "type": "content",
                     "title": title,
-                    "subtitle": f"({i // points_per_slide + 1})" if len(points) > points_per_slide else "",
+                    "subtitle": f"({i // _POINTS_PER_SLIDE + 1})" if len(points) > _POINTS_PER_SLIDE else "",
                     "content": '\n'.join(chunk),
                     "style": style
                 })
@@ -223,13 +329,11 @@ class PPTService:
         return slides
 
     def _parse_bullet_points(self, content: str) -> List[str]:
-        """解析bullet points"""
         if not content:
             return []
 
-        lines = content.split('\n')
         points = []
-        for line in lines:
+        for line in content.split('\n'):
             line = line.strip()
             if line:
                 if not line.startswith('•') and not line.startswith('-') and not line.startswith('*'):
@@ -239,8 +343,6 @@ class PPTService:
         return points if points else [content]
 
     def _render_content_html(self, content: str, content_style: str = "bullet") -> str:
-        """将内容文本渲染为HTML，支持不同内容样式"""
-        import re
         content = content.replace('\n', '<br>')
 
         content = re.sub(r'\*\*(.+?)\*\*', r'<strong class="highlight-keyword">\1</strong>', content)
@@ -281,20 +383,6 @@ class PPTService:
             items.append(f'<div class="bullet-item">{line}</div>')
         return '<div class="bullet-list">' + ''.join(items) + '</div>'
 
-    @staticmethod
-    def _clean_markdown(text: str) -> str:
-        import re
-        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-        text = text.replace('**', '')
-        text = re.sub(r'\$\$([\s\S]*?)\$\$', r'\1', text)
-        text = re.sub(r'\$([^$\n]+?)\$', r'\1', text)
-        text = re.sub(r'\\\[([\s\S]*?)\\\]', r'\1', text)
-        text = re.sub(r'\\\(([\s\S]*?)\\\)', r'\1', text)
-        text = re.sub(r'\\[a-zA-Z]+\{([^{}]*)\}', r'\1', text)
-        text = re.sub(r'\\[a-zA-Z]+', '', text)
-        text = re.sub(r'[\{\}]', '', text)
-        return text
-
     def _generate_slide_html(self, slide: Dict[str, Any], _config: Dict[str, Any]) -> str:
         slide_type = slide.get("type", "content")
         title = slide.get("title", "")
@@ -313,7 +401,7 @@ class PPTService:
             return f'<div class="slide title-slide" {accent_style}>{icon_html}<h1>{title}</h1><h3>{subtitle}</h3></div>'
 
         if slide_type == "agenda":
-            safe_content = self._clean_markdown(content)
+            safe_content = _clean_markdown(content, keep_html=False)
             icon_html = f'<div class="slide-icon">{icon}</div>' if icon else ''
             return f'<div class="slide agenda-slide" {accent_style}>{icon_html}<h2>{title}</h2><div class="content">{safe_content}</div></div>'
 
@@ -334,7 +422,7 @@ class PPTService:
 
         if layout == "quote":
             first_line = content.split('\n')[0].strip().lstrip('•-* ') if content else title
-            first_line = self._clean_markdown(first_line)
+            first_line = _clean_markdown(first_line, keep_html=False)
             return f'''<div class="slide content-slide layout-quote" {accent_style}>
                 {icon_html}
                 <div class="quote-mark">"</div>
@@ -344,7 +432,7 @@ class PPTService:
 
         if layout == "two-column":
             lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
-            lines = [self._clean_markdown(l) for l in lines]
+            lines = [_clean_markdown(l, keep_html=False) for l in lines]
             mid = (len(lines) + 1) // 2
             left_items = lines[:mid]
             right_items = lines[mid:]
@@ -364,7 +452,7 @@ class PPTService:
             cards_html = ""
             for i, line in enumerate(lines[:4]):
                 card_num = i + 1
-                line = self._clean_markdown(line)
+                line = _clean_markdown(line, keep_html=False)
                 cards_html += f'''<div class="card">
                     <div class="card-number">{card_num}</div>
                     <div class="card-text">{line}</div>
@@ -379,7 +467,7 @@ class PPTService:
             lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
             items_html = ""
             for i, line in enumerate(lines[:5]):
-                line = self._clean_markdown(line)
+                line = _clean_markdown(line, keep_html=False)
                 items_html += f'''<div class="timeline-item">
                     <div class="timeline-dot"></div>
                     <div class="timeline-content"><strong>{i+1}.</strong> {line}</div>
@@ -398,7 +486,8 @@ class PPTService:
         </div>'''
 
     def _generate_css_styles(self, config: Dict[str, Any]) -> str:
-        """生成CSS样式"""
+        c = config['color_scheme']
+        f = config['font_family']
         return f"""
         * {{
             margin: 0;
@@ -406,7 +495,7 @@ class PPTService:
             box-sizing: border-box;
         }}
         body {{
-            font-family: {config['font_family']};
+            font-family: {f};
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
@@ -442,7 +531,7 @@ class PPTService:
             margin-bottom: 10px;
         }}
         .slide.title-slide {{
-            background: linear-gradient(135deg, var(--accent, {config['color_scheme']}) 0%, {config['color_scheme']} 100%);
+            background: linear-gradient(135deg, var(--accent, {c}) 0%, {c} 100%);
             color: white;
             justify-content: center;
             align-items: center;
@@ -452,8 +541,8 @@ class PPTService:
             margin-bottom: 20px;
             color: white;
         }}
-        .slide h1 {{ font-size: 2.5em; margin-bottom: 30px; color: var(--accent, {config['color_scheme']}); }}
-        .slide h2 {{ font-size: 2em; margin-bottom: 20px; color: var(--accent, {config['color_scheme']}); }}
+        .slide h1 {{ font-size: 2.5em; margin-bottom: 30px; color: var(--accent, {c}); }}
+        .slide h2 {{ font-size: 2em; margin-bottom: 20px; color: var(--accent, {c}); }}
         .slide h3 {{ font-size: 1.2em; color: #666; margin-bottom: 15px; }}
         .slide .content {{
             font-size: 1.1em;
@@ -462,7 +551,7 @@ class PPTService:
         }}
         .slide.agenda-slide {{ background: #f8f9fa; }}
         .slide.thankyou-slide {{
-            background: linear-gradient(135deg, var(--accent, {config['color_scheme']}) 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent, {c}) 0%, #764ba2 100%);
             color: white;
             justify-content: center;
             align-items: center;
@@ -488,7 +577,7 @@ class PPTService:
         }}
         .quote-mark {{
             font-size: 6em;
-            color: var(--accent, {config['color_scheme']});
+            color: var(--accent, {c});
             opacity: 0.3;
             line-height: 1;
             font-family: Georgia, serif;
@@ -519,7 +608,7 @@ class PPTService:
             padding: 20px;
             background: #f8f9fa;
             border-radius: 10px;
-            border-left: 4px solid var(--accent, {config['color_scheme']});
+            border-left: 4px solid var(--accent, {c});
         }}
 
         .layout-cards .cards-container {{
@@ -532,13 +621,13 @@ class PPTService:
             background: #f8f9fa;
             border-radius: 12px;
             padding: 25px;
-            border-top: 4px solid var(--accent, {config['color_scheme']});
+            border-top: 4px solid var(--accent, {c});
             box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         }}
         .layout-cards .card-number {{
             font-size: 2em;
             font-weight: bold;
-            color: var(--accent, {config['color_scheme']});
+            color: var(--accent, {c});
             margin-bottom: 8px;
         }}
         .layout-cards .card-text {{
@@ -559,7 +648,7 @@ class PPTService:
             top: 0;
             bottom: 0;
             width: 3px;
-            background: var(--accent, {config['color_scheme']});
+            background: var(--accent, {c});
             opacity: 0.3;
         }}
         .layout-timeline .timeline-item {{
@@ -572,7 +661,7 @@ class PPTService:
             width: 14px;
             height: 14px;
             border-radius: 50%;
-            background: var(--accent, {config['color_scheme']});
+            background: var(--accent, {c});
             position: absolute;
             left: -33px;
             top: 5px;
@@ -601,7 +690,7 @@ class PPTService:
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            background: var(--accent, {config['color_scheme']});
+            background: var(--accent, {c});
             color: white;
             display: flex;
             align-items: center;
@@ -622,11 +711,11 @@ class PPTService:
             padding: 8px 15px;
             margin-bottom: 8px;
             background: #f8f9fa;
-            border-left: 4px solid var(--accent, {config['color_scheme']});
+            border-left: 4px solid var(--accent, {c});
             border-radius: 0 6px 6px 0;
         }}
         .highlight-keyword {{
-            color: var(--accent, {config['color_scheme']});
+            color: var(--accent, {c});
             font-weight: bold;
         }}
 
@@ -646,7 +735,7 @@ class PPTService:
         .navigation button {{
             padding: 10px 20px;
             border: none;
-            background: {config['color_scheme']};
+            background: {c};
             color: white;
             border-radius: 25px;
             cursor: pointer;
@@ -667,6 +756,13 @@ class PPTService:
     def _hex_to_rgb(self, hex_color: str) -> RGBColor:
         hex_color = hex_color.lstrip('#')
         return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+
+    @staticmethod
+    def _lighten_color(color: RGBColor, factor=0.85) -> RGBColor:
+        r = int(color[0] + (255 - color[0]) * factor)
+        g = int(color[1] + (255 - color[1]) * factor)
+        b = int(color[2] + (255 - color[2]) * factor)
+        return RGBColor(min(r, 255), min(g, 255), min(b, 255))
 
     def _add_shape(self, slide, left, top, width, height, fill_color, border_color=None):
         from pptx.enum.shapes import MSO_SHAPE
@@ -706,7 +802,7 @@ class PPTService:
         tf.word_wrap = True
         p = tf.paragraphs[0]
         p.text = text
-        p.font.size = Pt(font_size)
+        p.font.size = font_size
         p.font.bold = bold
         p.font.color.rgb = color
         p.alignment = alignment
@@ -724,39 +820,15 @@ class PPTService:
             else:
                 p = tf.add_paragraph()
             p.text = f"{bullet_char} {line}" if bullet_char else line
-            p.font.size = Pt(font_size)
+            p.font.size = font_size
             p.font.color.rgb = color
             p.alignment = alignment
             p.space_after = Pt(6)
             p.space_before = Pt(4)
         return tf
 
-    def _clean_md(self, text):
-        import re
-        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-        text = text.replace('**', '')
-        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('&nbsp;', ' ')
-        text = text.replace('&amp;', '&')
-        text = text.replace('&lt;', '<')
-        text = text.replace('&gt;', '>')
-        text = re.sub(r'\$\$([\s\S]*?)\$\$', r'\1', text)
-        text = re.sub(r'\$([^$\n]+?)\$', r'\1', text)
-        text = re.sub(r'\\\[([\s\S]*?)\\\]', r'\1', text)
-        text = re.sub(r'\\\(([\s\S]*?)\\\)', r'\1', text)
-        text = re.sub(r'\\[a-zA-Z]+\{([^{}]*)\}', r'\1', text)
-        text = re.sub(r'\\[a-zA-Z]+', '', text)
-        text = re.sub(r'[\{\}]', '', text)
-        return text
-
-    def _lighten_color(self, color: RGBColor, factor=0.85) -> RGBColor:
-        r = int(color[0] + (255 - color[0]) * factor)
-        g = int(color[1] + (255 - color[1]) * factor)
-        b = int(color[2] + (255 - color[2]) * factor)
-        return RGBColor(min(r, 255), min(g, 255), min(b, 255))
-
-    def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False, use_web_search: bool = False) -> bytes:
+    async def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general",
+                            use_llm: bool = False, use_web_search: bool = False) -> bytes:
         logger.info(f"开始生成PPTX: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
         config = self.scenario_configs.get(scenario, self.scenario_configs["general"])
@@ -765,8 +837,8 @@ class PPTService:
         language = outline.get("metadata", {}).get("language", "zh")
 
         prs = Presentation()
-        prs.slide_width = Inches(13.333)
-        prs.slide_height = Inches(7.5)
+        prs.slide_width = _SLIDE_WIDTH
+        prs.slide_height = _SLIDE_HEIGHT
         blank_layout = prs.slide_layouts[6]
 
         for slide_data in outline.get("slides", []):
@@ -789,11 +861,15 @@ class PPTService:
 
             if slide_type == "content" and use_llm and llm_service.is_configured:
                 try:
-                    content = llm_service.generate_content(title, slide_type, topic, language, use_web_search=use_web_search)
+                    import asyncio
+                    content = await asyncio.to_thread(
+                        llm_service.generate_content, title, slide_type, topic, language,
+                        use_web_search=use_web_search
+                    )
                 except Exception as e:
                     logger.error(f"LLM内容生成失败: {e}")
 
-            content = self._clean_md(content)
+            content = _clean_markdown(content, keep_html=False)
             slide = prs.slides.add_slide(blank_layout)
 
             if slide_type == "title":
@@ -822,13 +898,13 @@ class PPTService:
         self._add_shape(slide, Inches(0), Inches(6.8), Inches(13.333), Inches(0.7), self._lighten_color(color, 0.7))
 
         if icon:
-            self._add_text(slide, Inches(5.5), Inches(1.2), Inches(2.333), Inches(1), icon, font_size=48, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+            self._add_text(slide, Inches(5.5), Inches(1.2), Inches(2.333), Inches(1), icon, font_size=_PPTX_LAYOUT["icon_font_size"], alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
-        title_top = Inches(2.2) if icon else Inches(2.5)
-        self._add_text(slide, Inches(1), title_top, Inches(11.333), Inches(2), title, font_size=44, bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+        title_top = _PPTX_LAYOUT["title_top"] if icon else _PPTX_LAYOUT["title_top_no_icon"]
+        self._add_text(slide, Inches(1), title_top, Inches(11.333), Inches(2), title, font_size=_PPTX_LAYOUT["title_center_font_size"], bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
         if subtitle:
-            self._add_text(slide, Inches(1), Inches(4.5), Inches(11.333), Inches(1), subtitle, font_size=24, alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
+            self._add_text(slide, Inches(1), Inches(4.5), Inches(11.333), Inches(1), subtitle, font_size=_PPTX_LAYOUT["subtitle_font_size"], alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
 
     def _build_agenda_slide(self, slide, title, content, color, icon=""):
         bg = slide.background
@@ -836,15 +912,15 @@ class PPTService:
         fill.solid()
         fill.fore_color.rgb = RGBColor(250, 250, 250)
 
-        self._add_shape(slide, Inches(0), Inches(0), Inches(0.15), Inches(7.5), color)
+        self._add_shape(slide, Inches(0), Inches(0), _PPTX_LAYOUT["left_stripe_width"], Inches(7.5), color)
 
         if icon:
-            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=28, color=color)
+            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=_PPTX_LAYOUT["icon_font_size_sm"], color=color)
 
-        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1), title, font_size=36, bold=True, color=color)
+        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1), title, font_size=_PPTX_LAYOUT["heading_font_size"], bold=True, color=color)
 
         lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
-        self._add_bullet_text(slide, Inches(1.7), Inches(1.8), Inches(10), Inches(5.0), lines[:6], font_size=20, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(1.7), Inches(1.8), Inches(10), Inches(5.0), lines[:_PPTX_LAYOUT["max_agenda_items"]], font_size=_PPTX_LAYOUT["body_font_size"], color=RGBColor(51,51,51))
 
     def _build_thankyou_slide(self, slide, title, subtitle, color, icon=""):
         bg = slide.background
@@ -855,12 +931,12 @@ class PPTService:
         self._add_shape(slide, Inches(5.5), Inches(1.5), Inches(2.333), Inches(0.05), RGBColor(255,255,255))
 
         if icon:
-            self._add_text(slide, Inches(5.5), Inches(2), Inches(2.333), Inches(1), icon, font_size=48, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+            self._add_text(slide, Inches(5.5), Inches(2), Inches(2.333), Inches(1), icon, font_size=_PPTX_LAYOUT["icon_font_size"], alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
-        self._add_text(slide, Inches(1), Inches(3.2), Inches(11.333), Inches(1.5), title, font_size=48, bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+        self._add_text(slide, Inches(1), Inches(3.2), Inches(11.333), Inches(1.5), title, font_size=_PPTX_LAYOUT["title_center_font_size"], bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
         if subtitle:
-            self._add_text(slide, Inches(1), Inches(4.8), Inches(11.333), Inches(1), subtitle, font_size=24, alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
+            self._add_text(slide, Inches(1), Inches(4.8), Inches(11.333), Inches(1), subtitle, font_size=_PPTX_LAYOUT["subtitle_font_size"], alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
 
     def _build_content_slide_ex(self, slide, title, subtitle, content, color, layout, icon=""):
         bg = slide.background
@@ -868,20 +944,20 @@ class PPTService:
         fill.solid()
         fill.fore_color.rgb = RGBColor(255, 255, 255)
 
-        self._add_shape(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.08), color)
-        self._add_shape(slide, Inches(0), Inches(7.42), Inches(13.333), Inches(0.08), color)
+        self._add_shape(slide, Inches(0), Inches(0), Inches(13.333), _PPTX_LAYOUT["top_bar_height"], color)
+        self._add_shape(slide, Inches(0), Inches(7.42), Inches(13.333), _PPTX_LAYOUT["bottom_bar_height"], color)
 
         if icon:
-            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=24, color=color)
+            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=_PPTX_LAYOUT["icon_font_size_xs"], color=color)
 
-        self._add_shape(slide, Inches(0.5), Inches(0.5), Inches(0.08), Inches(0.9), color)
+        self._add_shape(slide, Inches(0.5), Inches(0.5), _PPTX_LAYOUT["accent_stripe_width"], Inches(0.9), color)
 
-        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1.0), title, font_size=32, bold=True, color=color)
+        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1.0), title, font_size=_PPTX_LAYOUT["content_title_font_size"], bold=True, color=color)
 
-        content_top = Inches(1.6)
+        content_top = _PPTX_LAYOUT["content_top"]
         if subtitle:
-            self._add_text(slide, Inches(0.8), Inches(1.4), Inches(11), Inches(0.5), subtitle, font_size=16, color=RGBColor(128,128,128))
-            content_top = Inches(2.0)
+            self._add_text(slide, Inches(0.8), Inches(1.4), Inches(11), Inches(0.5), subtitle, font_size=Pt(16), color=RGBColor(128,128,128))
+            content_top = _PPTX_LAYOUT["content_top_with_subtitle"]
 
         lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
 
@@ -899,19 +975,17 @@ class PPTService:
             self._layout_left(slide, lines, color, content_top)
 
     def _layout_left(self, slide, lines, color, top_start):
-        max_lines = 6
-        self._add_bullet_text(slide, Inches(1.4), top_start, Inches(10.5), Inches(5.0), lines[:max_lines], font_size=18, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(1.4), top_start, Inches(10.5), Inches(5.0), lines[:_PPTX_LAYOUT["max_body_lines"]], font_size=_PPTX_LAYOUT["body_font_size"], color=RGBColor(51,51,51))
 
     def _layout_centered(self, slide, lines, color, top_start):
-        max_lines = 5
-        self._add_bullet_text(slide, Inches(2), top_start + Inches(0.2), Inches(9.333), Inches(5.0), lines[:max_lines], font_size=20, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(2), top_start + Inches(0.2), Inches(9.333), Inches(5.0), lines[:_PPTX_LAYOUT["max_body_lines_centered"]], font_size=_PPTX_LAYOUT["body_font_size_lg"], alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
 
     def _layout_quote(self, slide, lines, title, color, top_start):
         if lines:
             quote_text = lines[0]
-            self._add_text(slide, Inches(2), top_start, Inches(1), Inches(1.5), "\u201C", font_size=72, bold=True, color=self._lighten_color(color, 0.6))
-            self._add_text(slide, Inches(2.5), top_start + Inches(0.7), Inches(8.5), Inches(3.0), quote_text, font_size=24, bold=True, color=RGBColor(51,51,51))
-            self._add_text(slide, Inches(2.5), top_start + Inches(3.8), Inches(8.5), Inches(0.6), f"\u2014 {title}", font_size=18, color=RGBColor(128,128,128))
+            self._add_text(slide, Inches(2), top_start, Inches(1), Inches(1.5), "\u201C", font_size=_PPTX_LAYOUT["quote_font_size"], bold=True, color=self._lighten_color(color, 0.6))
+            self._add_text(slide, Inches(2.5), top_start + Inches(0.7), Inches(8.5), Inches(3.0), quote_text, font_size=_PPTX_LAYOUT["quote_text_font_size"], bold=True, color=RGBColor(51,51,51))
+            self._add_text(slide, Inches(2.5), top_start + Inches(3.8), Inches(8.5), Inches(0.6), f"\u2014 {title}", font_size=_PPTX_LAYOUT["body_font_size"], color=RGBColor(128,128,128))
 
     def _layout_two_column(self, slide, lines, color, top_start):
         mid = (len(lines) + 1) // 2
@@ -922,12 +996,11 @@ class PPTService:
         self._add_rounded_rect(slide, Inches(0.6), top_start, Inches(5.8), col_height, RGBColor(248,249,250), color)
         self._add_rounded_rect(slide, Inches(6.9), top_start, Inches(5.8), col_height, RGBColor(248,249,250), color)
 
-        max_lines = 5
-        self._add_bullet_text(slide, Inches(1.0), top_start + Inches(0.3), Inches(5.0), Inches(3.8), left_lines[:max_lines], font_size=16, color=RGBColor(51,51,51))
-        self._add_bullet_text(slide, Inches(7.3), top_start + Inches(0.3), Inches(5.0), Inches(3.8), right_lines[:max_lines], font_size=16, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(1.0), top_start + Inches(0.3), Inches(5.0), Inches(3.8), left_lines[:_PPTX_LAYOUT["max_body_lines_column"]], font_size=_PPTX_LAYOUT["body_font_size_sm"], color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(7.3), top_start + Inches(0.3), Inches(5.0), Inches(3.8), right_lines[:_PPTX_LAYOUT["max_body_lines_column"]], font_size=_PPTX_LAYOUT["body_font_size_sm"], color=RGBColor(51,51,51))
 
     def _layout_cards(self, slide, lines, color, top_start):
-        card_lines = lines[:4]
+        card_lines = lines[:_PPTX_LAYOUT["max_card_items"]]
         card_width = Inches(2.8)
         card_height = Inches(4.0)
         start_x = Inches(0.6)
@@ -942,30 +1015,31 @@ class PPTService:
             circle = self._add_circle(slide, x + Inches(0.3), y + Inches(0.3), Inches(0.5), color)
             circle_tf = circle.text_frame
             circle_tf.paragraphs[0].text = str(i + 1)
-            circle_tf.paragraphs[0].font.size = Pt(18)
+            circle_tf.paragraphs[0].font.size = _PPTX_LAYOUT["card_num_font_size"]
             circle_tf.paragraphs[0].font.bold = True
             circle_tf.paragraphs[0].font.color.rgb = RGBColor(255,255,255)
             circle_tf.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-            self._add_text(slide, x + Inches(0.2), y + Inches(1.1), card_width - Inches(0.4), Inches(2.6), line, font_size=14, color=RGBColor(51,51,51))
+            self._add_text(slide, x + Inches(0.2), y + Inches(1.1), card_width - Inches(0.4), Inches(2.6), line, font_size=_PPTX_LAYOUT["body_font_size_xs"], color=RGBColor(51,51,51))
 
     def _layout_timeline(self, slide, lines, color, top_start):
         line_y = top_start + Inches(2.2)
         self._add_shape(slide, Inches(1.5), line_y, Inches(10.333), Inches(0.06), self._lighten_color(color, 0.6))
 
-        item_count = min(len(lines), 5)
+        item_count = min(len(lines), _PPTX_LAYOUT["max_timeline_items"])
         spacing = Inches(10.333) / max(item_count, 1)
 
-        for i, line in enumerate(lines[:5]):
+        for i, line in enumerate(lines[:_PPTX_LAYOUT["max_timeline_items"]]):
             x = Inches(1.5) + spacing * i
             dot_x = x + spacing / 2 - Inches(0.15)
 
             self._add_circle(slide, dot_x, line_y - Inches(0.12), Inches(0.3), color)
 
-            self._add_text(slide, x, top_start + Inches(0.5), spacing, Inches(0.5), str(i + 1), font_size=28, bold=True, alignment=PP_ALIGN.CENTER, color=color)
+            self._add_text(slide, x, top_start + Inches(0.5), spacing, Inches(0.5), str(i + 1), font_size=_PPTX_LAYOUT["timeline_num_font_size"], bold=True, alignment=PP_ALIGN.CENTER, color=color)
 
             text_x = x - Inches(0.2)
             text_width = spacing + Inches(0.4)
-            self._add_text(slide, text_x, line_y + Inches(0.4), text_width, Inches(2.0), line, font_size=14, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+            self._add_text(slide, text_x, line_y + Inches(0.4), text_width, Inches(2.0), line, font_size=_PPTX_LAYOUT["body_font_size_xs"], alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+
 
 ppt_service = PPTService()
