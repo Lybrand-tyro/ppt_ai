@@ -658,33 +658,76 @@ class PPTService:
         """
 
     def _hex_to_rgb(self, hex_color: str) -> RGBColor:
-        """将十六进制颜色转换为RGBColor"""
         hex_color = hex_color.lstrip('#')
         return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
 
+    def _add_shape(self, slide, left, top, width, height, fill_color, border_color=None):
+        from pptx.enum.shapes import MSO_SHAPE
+        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = fill_color
+        if border_color:
+            shape.line.color.rgb = border_color
+            shape.line.width = Pt(1)
+        else:
+            shape.line.fill.background()
+        return shape
+
+    def _add_rounded_rect(self, slide, left, top, width, height, fill_color, border_color=None):
+        from pptx.enum.shapes import MSO_SHAPE
+        shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = fill_color
+        if border_color:
+            shape.line.color.rgb = border_color
+            shape.line.width = Pt(1)
+        else:
+            shape.line.fill.background()
+        return shape
+
+    def _add_circle(self, slide, left, top, size, fill_color):
+        from pptx.enum.shapes import MSO_SHAPE
+        shape = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, size, size)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = fill_color
+        shape.line.fill.background()
+        return shape
+
+    def _add_text(self, slide, left, top, width, height, text, font_size=20, bold=False, color=RGBColor(51,51,51), alignment=PP_ALIGN.LEFT):
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = text
+        p.font.size = Pt(font_size)
+        p.font.bold = bold
+        p.font.color.rgb = color
+        p.alignment = alignment
+        return tf
+
+    def _clean_md(self, text):
+        import re
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = text.replace('**', '')
+        return text
+
+    def _lighten_color(self, color: RGBColor, factor=0.85) -> RGBColor:
+        r = int(color[0] + (255 - color[0]) * factor)
+        g = int(color[1] + (255 - color[1]) * factor)
+        b = int(color[2] + (255 - color[2]) * factor)
+        return RGBColor(min(r, 255), min(g, 255), min(b, 255))
+
     def generate_pptx(self, outline: Dict[str, Any], scenario: str = "general", use_llm: bool = False, use_web_search: bool = False) -> bytes:
-        """生成PPTX格式的PPT
-
-        Args:
-            outline: 大纲数据
-            scenario: 应用场景
-            use_llm: 是否使用LLM生成内容
-            use_web_search: 是否使用联网搜索增强
-
-        Returns:
-            PPTX文件的字节数据
-        """
         logger.info(f"开始生成PPTX: scenario={scenario}, use_llm={use_llm}, use_web_search={use_web_search}")
 
         config = self.scenario_configs.get(scenario, self.scenario_configs["general"])
-        color = self._hex_to_rgb(config["color_scheme"])
+        default_color = self._hex_to_rgb(config["color_scheme"])
         topic = outline.get("title", "")
         language = outline.get("metadata", {}).get("language", "zh")
 
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
-
         blank_layout = prs.slide_layouts[6]
 
         for slide_data in outline.get("slides", []):
@@ -694,14 +737,16 @@ class PPTService:
             content = slide_data.get("content", "")
             style = slide_data.get("style", {})
             accent_color_str = style.get("accent_color", "")
+            layout = style.get("layout", "left")
+            icon = style.get("icon", "")
 
             if accent_color_str:
                 try:
                     slide_color = self._hex_to_rgb(accent_color_str)
                 except Exception:
-                    slide_color = color
+                    slide_color = default_color
             else:
-                slide_color = color
+                slide_color = default_color
 
             if slide_type == "content" and use_llm and llm_service.is_configured:
                 try:
@@ -709,16 +754,17 @@ class PPTService:
                 except Exception as e:
                     logger.error(f"LLM内容生成失败: {e}")
 
+            content = self._clean_md(content)
             slide = prs.slides.add_slide(blank_layout)
 
             if slide_type == "title":
-                self._build_title_slide(slide, title, subtitle, slide_color)
+                self._build_title_slide(slide, title, subtitle, slide_color, icon)
             elif slide_type == "agenda":
-                self._build_agenda_slide(slide, title, content, slide_color)
+                self._build_agenda_slide(slide, title, content, slide_color, icon)
             elif slide_type == "thankyou":
-                self._build_thankyou_slide(slide, title, subtitle, slide_color)
+                self._build_thankyou_slide(slide, title, subtitle, slide_color, icon)
             else:
-                self._build_content_slide(slide, title, subtitle, content, slide_color)
+                self._build_content_slide_ex(slide, title, subtitle, content, slide_color, layout, icon)
 
         buffer = io.BytesIO()
         prs.save(buffer)
@@ -728,127 +774,166 @@ class PPTService:
         logger.info(f"PPTX生成完成: {len(prs.slides)} 张幻灯片, {len(pptx_bytes)} 字节")
         return pptx_bytes
 
-    def _build_title_slide(self, slide, title: str, subtitle: str, color: RGBColor):
-        """构建标题幻灯片"""
+    def _build_title_slide(self, slide, title, subtitle, color, icon=""):
         bg = slide.background
         fill = bg.fill
         fill.solid()
         fill.fore_color.rgb = color
 
-        txBox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11.333), Inches(2))
-        tf = txBox.text_frame
-        tf.word_wrap = True
-        p = tf.paragraphs[0]
-        p.text = title
-        p.font.size = Pt(44)
-        p.font.bold = True
-        p.font.color.rgb = RGBColor(255, 255, 255)
-        p.alignment = PP_ALIGN.CENTER
+        self._add_shape(slide, Inches(0), Inches(6.8), Inches(13.333), Inches(0.7), self._lighten_color(color, 0.7))
+
+        if icon:
+            self._add_text(slide, Inches(5.5), Inches(1.2), Inches(2.333), Inches(1), icon, font_size=48, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+
+        title_top = Inches(2.2) if icon else Inches(2.5)
+        self._add_text(slide, Inches(1), title_top, Inches(11.333), Inches(2), title, font_size=44, bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
         if subtitle:
-            p2 = tf.add_paragraph()
-            p2.text = subtitle
-            p2.font.size = Pt(24)
-            p2.font.color.rgb = RGBColor(230, 230, 230)
-            p2.alignment = PP_ALIGN.CENTER
+            self._add_text(slide, Inches(1), Inches(4.5), Inches(11.333), Inches(1), subtitle, font_size=24, alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
 
-    def _build_agenda_slide(self, slide, title: str, content: str, color: RGBColor):
-        """构建目录幻灯片"""
+    def _build_agenda_slide(self, slide, title, content, color, icon=""):
         bg = slide.background
         fill = bg.fill
         fill.solid()
-        fill.fore_color.rgb = RGBColor(245, 245, 245)
+        fill.fore_color.rgb = RGBColor(250, 250, 250)
 
-        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.733), Inches(1.2))
-        tf = txBox.text_frame
-        p = tf.paragraphs[0]
-        p.text = title
-        p.font.size = Pt(36)
-        p.font.bold = True
-        p.font.color.rgb = color
+        self._add_shape(slide, Inches(0), Inches(0), Inches(0.15), Inches(7.5), color)
 
-        content_box = slide.shapes.add_textbox(Inches(1.5), Inches(2), Inches(10.333), Inches(4.5))
-        tf2 = content_box.text_frame
-        tf2.word_wrap = True
+        if icon:
+            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=28, color=color)
 
-        lines = self._parse_bullet_points(content)
-        for i, line in enumerate(lines):
-            clean_line = line.lstrip('•-* ').strip()
-            if i == 0:
-                p = tf2.paragraphs[0]
-            else:
-                p = tf2.add_paragraph()
-            p.text = clean_line
-            p.font.size = Pt(22)
-            p.font.color.rgb = RGBColor(51, 51, 51)
-            p.space_after = Pt(12)
-            p.level = 0
+        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1), title, font_size=36, bold=True, color=color)
 
-    def _build_thankyou_slide(self, slide, title: str, subtitle: str, color: RGBColor):
-        """构建致谢幻灯片"""
+        lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
+        for i, line in enumerate(lines[:8]):
+            y = Inches(1.8 + i * 0.65)
+            self._add_circle(slide, Inches(1.2), y + Inches(0.05), Inches(0.25), color)
+            self._add_text(slide, Inches(1.7), y, Inches(10), Inches(0.6), line, font_size=22, color=RGBColor(51,51,51))
+
+    def _build_thankyou_slide(self, slide, title, subtitle, color, icon=""):
         bg = slide.background
         fill = bg.fill
         fill.solid()
         fill.fore_color.rgb = color
 
-        txBox = slide.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.333), Inches(2))
-        tf = txBox.text_frame
-        p = tf.paragraphs[0]
-        p.text = title
-        p.font.size = Pt(48)
-        p.font.bold = True
-        p.font.color.rgb = RGBColor(255, 255, 255)
-        p.alignment = PP_ALIGN.CENTER
+        self._add_shape(slide, Inches(5.5), Inches(1.5), Inches(2.333), Inches(0.05), RGBColor(255,255,255))
+
+        if icon:
+            self._add_text(slide, Inches(5.5), Inches(2), Inches(2.333), Inches(1), icon, font_size=48, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
+
+        self._add_text(slide, Inches(1), Inches(3.2), Inches(11.333), Inches(1.5), title, font_size=48, bold=True, alignment=PP_ALIGN.CENTER, color=RGBColor(255,255,255))
 
         if subtitle:
-            p2 = tf.add_paragraph()
-            p2.text = subtitle
-            p2.font.size = Pt(24)
-            p2.font.color.rgb = RGBColor(230, 230, 230)
-            p2.alignment = PP_ALIGN.CENTER
+            self._add_text(slide, Inches(1), Inches(4.8), Inches(11.333), Inches(1), subtitle, font_size=24, alignment=PP_ALIGN.CENTER, color=RGBColor(230,230,230))
 
-    def _build_content_slide(self, slide, title: str, subtitle: str, content: str, color: RGBColor):
-        """构建内容幻灯片"""
+    def _build_content_slide_ex(self, slide, title, subtitle, content, color, layout, icon=""):
         bg = slide.background
         fill = bg.fill
         fill.solid()
         fill.fore_color.rgb = RGBColor(255, 255, 255)
 
-        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.733), Inches(1.2))
-        tf = txBox.text_frame
-        p = tf.paragraphs[0]
-        p.text = title
-        p.font.size = Pt(36)
-        p.font.bold = True
-        p.font.color.rgb = color
+        self._add_shape(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.08), color)
+        self._add_shape(slide, Inches(0), Inches(7.42), Inches(13.333), Inches(0.08), color)
+
+        if icon:
+            self._add_text(slide, Inches(0.6), Inches(0.3), Inches(1), Inches(0.8), icon, font_size=24, color=color)
+
+        self._add_shape(slide, Inches(0.5), Inches(0.5), Inches(0.08), Inches(0.9), color)
+
+        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(0.9), title, font_size=32, bold=True, color=color)
 
         if subtitle:
-            p2 = tf.add_paragraph()
-            p2.text = subtitle
-            p2.font.size = Pt(18)
-            p2.font.color.rgb = RGBColor(128, 128, 128)
+            self._add_text(slide, Inches(0.8), Inches(1.3), Inches(11), Inches(0.5), subtitle, font_size=16, color=RGBColor(128,128,128))
 
-        content_box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11.333), Inches(4.5))
-        tf2 = content_box.text_frame
-        tf2.word_wrap = True
+        lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
 
-        lines = self._parse_bullet_points(content)
-        for i, line in enumerate(lines):
-            clean_line = line.lstrip('•-* ').strip()
-            if i == 0:
-                p = tf2.paragraphs[0]
-            else:
-                p = tf2.add_paragraph()
-            p.text = "• " + clean_line
-            p.font.size = Pt(20)
-            p.font.color.rgb = RGBColor(51, 51, 51)
-            p.space_after = Pt(10)
+        if layout == "centered":
+            self._layout_centered(slide, lines, color)
+        elif layout == "quote":
+            self._layout_quote(slide, lines, title, color)
+        elif layout == "two-column":
+            self._layout_two_column(slide, lines, color)
+        elif layout == "cards":
+            self._layout_cards(slide, lines, color)
+        elif layout == "timeline":
+            self._layout_timeline(slide, lines, color)
+        else:
+            self._layout_left(slide, lines, color)
 
-        left_line = slide.shapes.add_shape(
-            1, Inches(0.4), Inches(0.5), Inches(0.06), Inches(1.0)
-        )
-        left_line.fill.solid()
-        left_line.fill.fore_color.rgb = color
-        left_line.line.fill.background()
+    def _layout_left(self, slide, lines, color):
+        for i, line in enumerate(lines[:8]):
+            y = Inches(2.0 + i * 0.6)
+            self._add_circle(slide, Inches(1.0), y + Inches(0.08), Inches(0.2), color)
+            self._add_text(slide, Inches(1.4), y, Inches(10.5), Inches(0.55), line, font_size=20, color=RGBColor(51,51,51))
+
+    def _layout_centered(self, slide, lines, color):
+        for i, line in enumerate(lines[:6]):
+            y = Inches(2.2 + i * 0.7)
+            self._add_text(slide, Inches(2), y, Inches(9.333), Inches(0.6), line, font_size=22, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+
+    def _layout_quote(self, slide, lines, title, color):
+        if lines:
+            quote_text = lines[0]
+            self._add_text(slide, Inches(2), Inches(1.8), Inches(1), Inches(1.5), "\u201C", font_size=72, bold=True, color=self._lighten_color(color, 0.6))
+            self._add_text(slide, Inches(2.5), Inches(2.5), Inches(8.5), Inches(2.5), quote_text, font_size=26, bold=True, color=RGBColor(51,51,51))
+            self._add_text(slide, Inches(2.5), Inches(5.2), Inches(8.5), Inches(0.6), f"\u2014 {title}", font_size=18, color=RGBColor(128,128,128))
+
+    def _layout_two_column(self, slide, lines, color):
+        mid = (len(lines) + 1) // 2
+        left_lines = lines[:mid]
+        right_lines = lines[mid:]
+
+        self._add_rounded_rect(slide, Inches(0.6), Inches(2.0), Inches(5.8), Inches(4.8), RGBColor(248,249,250), color)
+        self._add_rounded_rect(slide, Inches(6.9), Inches(2.0), Inches(5.8), Inches(4.8), RGBColor(248,249,250), color)
+
+        for i, line in enumerate(left_lines[:6]):
+            y = Inches(2.3 + i * 0.6)
+            self._add_text(slide, Inches(1.0), y, Inches(5.0), Inches(0.55), f"\u2022 {line}", font_size=18, color=RGBColor(51,51,51))
+
+        for i, line in enumerate(right_lines[:6]):
+            y = Inches(2.3 + i * 0.6)
+            self._add_text(slide, Inches(7.3), y, Inches(5.0), Inches(0.55), f"\u2022 {line}", font_size=18, color=RGBColor(51,51,51))
+
+    def _layout_cards(self, slide, lines, color):
+        card_lines = lines[:4]
+        card_width = Inches(2.8)
+        card_height = Inches(3.5)
+        start_x = Inches(0.6)
+        gap = Inches(0.3)
+
+        for i, line in enumerate(card_lines):
+            x = start_x + i * (card_width + gap)
+            y = Inches(2.2)
+
+            self._add_rounded_rect(slide, x, y, card_width, card_height, RGBColor(248,249,250), color)
+
+            circle = self._add_circle(slide, x + Inches(0.3), y + Inches(0.3), Inches(0.5), color)
+            circle_tf = circle.text_frame
+            circle_tf.paragraphs[0].text = str(i + 1)
+            circle_tf.paragraphs[0].font.size = Pt(18)
+            circle_tf.paragraphs[0].font.bold = True
+            circle_tf.paragraphs[0].font.color.rgb = RGBColor(255,255,255)
+            circle_tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+            self._add_text(slide, x + Inches(0.2), y + Inches(1.1), card_width - Inches(0.4), Inches(2.2), line, font_size=16, color=RGBColor(51,51,51))
+
+    def _layout_timeline(self, slide, lines, color):
+        line_y = Inches(4.0)
+        self._add_shape(slide, Inches(1.5), line_y, Inches(10.333), Inches(0.06), self._lighten_color(color, 0.6))
+
+        item_count = min(len(lines), 5)
+        spacing = Inches(10.333) / max(item_count, 1)
+
+        for i, line in enumerate(lines[:5]):
+            x = Inches(1.5) + spacing * i
+            dot_x = x + spacing / 2 - Inches(0.15)
+
+            self._add_circle(slide, dot_x, line_y - Inches(0.12), Inches(0.3), color)
+
+            self._add_text(slide, x, Inches(2.5), spacing, Inches(0.5), str(i + 1), font_size=28, bold=True, alignment=PP_ALIGN.CENTER, color=color)
+
+            text_x = x - Inches(0.2)
+            text_width = spacing + Inches(0.4)
+            self._add_text(slide, text_x, Inches(4.5), text_width, Inches(2.0), line, font_size=15, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
 
 ppt_service = PPTService()
