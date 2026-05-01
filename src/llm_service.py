@@ -726,7 +726,7 @@ PPT Topic: {topic}
 {"7. Incorporate web search information to make the content richer, more accurate, and more in-depth, including real data and cases" if web_context else ""}"""
 
     def _call_llm(self, prompt: str, task_id: str = "") -> str:
-        """调用LLM API（含重试机制和取消检查）
+        """调用LLM API（流式响应，含重试机制和取消检查）
 
         Args:
             prompt: 提示词
@@ -750,25 +750,54 @@ PPT Topic: {topic}
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.7,
-            "max_tokens": 4096
+            "max_tokens": 4096,
+            "stream": True
         }
 
         if self.config["is_local"]:
             payload["stream"] = False
 
         max_retries = 3
-        timeout = 180
+        connect_timeout = 30
+        read_timeout = 300
 
         for attempt in range(max_retries):
             try:
                 if task_id and progress_tracker.is_cancelled(task_id):
                     raise InterruptedError("任务已取消")
-                logger.info(f"LLM API调用 (尝试 {attempt + 1}/{max_retries}, 超时={timeout}s)")
+                logger.info(f"LLM API调用 (尝试 {attempt + 1}/{max_retries})")
+
+                if not payload.get("stream", False):
+                    response = requests.post(
+                        self.config["api_endpoint"],
+                        headers=headers,
+                        json=payload,
+                        timeout=(connect_timeout, read_timeout)
+                    )
+                    if response.status_code == 401:
+                        logger.error("LLM API认证失败(401)：API密钥无效或已过期，请检查API Key")
+                        raise PermissionError("API密钥无效或已过期，请检查LLM配置中的API Key")
+                    if response.status_code == 403:
+                        logger.error("LLM API访问被拒绝(403)：无权限访问该模型")
+                        raise PermissionError("无权限访问该模型，请检查API Key权限")
+                    if response.status_code == 404:
+                        logger.error(f"LLM API端点不存在(404)：请检查端点地址和模型名称")
+                        raise ValueError(f"API端点或模型不存在，请检查端点地址和模型名称是否正确")
+                    response.raise_for_status()
+                    result = response.json()
+                    if "choices" in result and len(result["choices"]) > 0:
+                        return result["choices"][0]["message"]["content"]
+                    elif "content" in result:
+                        return result["content"]
+                    else:
+                        raise ValueError(f"Unexpected response format: {result}")
+
                 response = requests.post(
                     self.config["api_endpoint"],
                     headers=headers,
                     json=payload,
-                    timeout=timeout
+                    timeout=(connect_timeout, read_timeout),
+                    stream=True
                 )
 
                 if response.status_code == 401:
@@ -780,24 +809,41 @@ PPT Topic: {topic}
                 if response.status_code == 404:
                     logger.error(f"LLM API端点不存在(404)：请检查端点地址和模型名称")
                     raise ValueError(f"API端点或模型不存在，请检查端点地址和模型名称是否正确")
-
                 response.raise_for_status()
-                result = response.json()
 
-                if "choices" in result and len(result["choices"]) > 0:
-                    return result["choices"][0]["message"]["content"]
-                elif "content" in result:
-                    return result["content"]
-                else:
-                    raise ValueError(f"Unexpected response format: {result}")
+                full_content = []
+                for line in response.iter_lines(decode_unicode=True):
+                    if task_id and progress_tracker.is_cancelled(task_id):
+                        response.close()
+                        raise InterruptedError("任务已取消")
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            choices = chunk.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    full_content.append(content)
+                        except json.JSONDecodeError:
+                            continue
 
-            except (PermissionError, ValueError):
+                response.close()
+                result_text = "".join(full_content)
+                if not result_text:
+                    raise ValueError("LLM返回空响应")
+                return result_text
+
+            except (PermissionError, ValueError, InterruptedError):
                 raise
             except requests.exceptions.Timeout:
                 logger.warning(f"LLM API调用超时 (尝试 {attempt + 1}/{max_retries})")
                 if attempt < max_retries - 1:
-                    timeout += 60
-                    logger.info(f"增加超时到 {timeout}s 后重试...")
                     continue
                 logger.error("LLM API调用超时，已达最大重试次数")
                 raise TimeoutError(

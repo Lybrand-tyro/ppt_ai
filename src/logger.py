@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 import threading
+import io
 
 class _DedupFilter(logging.Filter):
     def __init__(self):
@@ -46,7 +47,9 @@ class Logger:
         if not self._logger.handlers:
             self._dedup_filter = _DedupFilter()
 
-            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler = logging.StreamHandler(
+                io.TextIOWrapper(sys.stdout.buffer, encoding=sys.stdout.encoding or 'utf-8', errors='replace', line_buffering=True)
+            )
             console_handler.setLevel(logging.DEBUG)
             console_handler.addFilter(self._dedup_filter)
 

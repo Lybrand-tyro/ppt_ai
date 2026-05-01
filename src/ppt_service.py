@@ -286,6 +286,13 @@ class PPTService:
         import re
         text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
         text = text.replace('**', '')
+        text = re.sub(r'\$\$([\s\S]*?)\$\$', r'\1', text)
+        text = re.sub(r'\$([^$\n]+?)\$', r'\1', text)
+        text = re.sub(r'\\\[([\s\S]*?)\\\]', r'\1', text)
+        text = re.sub(r'\\\(([\s\S]*?)\\\)', r'\1', text)
+        text = re.sub(r'\\[a-zA-Z]+\{([^{}]*)\}', r'\1', text)
+        text = re.sub(r'\\[a-zA-Z]+', '', text)
+        text = re.sub(r'[\{\}]', '', text)
         return text
 
     def _generate_slide_html(self, slide: Dict[str, Any], _config: Dict[str, Any]) -> str:
@@ -693,7 +700,7 @@ class PPTService:
         shape.line.fill.background()
         return shape
 
-    def _add_text(self, slide, left, top, width, height, text, font_size=20, bold=False, color=RGBColor(51,51,51), alignment=PP_ALIGN.LEFT):
+    def _add_text(self, slide, left, top, width, height, text, font_size=20, bold=False, color=RGBColor(51,51,51), alignment=PP_ALIGN.LEFT, auto_size=False):
         txBox = slide.shapes.add_textbox(left, top, width, height)
         tf = txBox.text_frame
         tf.word_wrap = True
@@ -703,12 +710,44 @@ class PPTService:
         p.font.bold = bold
         p.font.color.rgb = color
         p.alignment = alignment
+        p.space_after = Pt(0)
+        p.space_before = Pt(0)
+        return tf
+
+    def _add_bullet_text(self, slide, left, top, width, height, lines, font_size=18, color=RGBColor(51,51,51), alignment=PP_ALIGN.LEFT, bullet_char="\u2022"):
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        for i, line in enumerate(lines):
+            if i == 0:
+                p = tf.paragraphs[0]
+            else:
+                p = tf.add_paragraph()
+            p.text = f"{bullet_char} {line}" if bullet_char else line
+            p.font.size = Pt(font_size)
+            p.font.color.rgb = color
+            p.alignment = alignment
+            p.space_after = Pt(6)
+            p.space_before = Pt(4)
         return tf
 
     def _clean_md(self, text):
         import re
         text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
         text = text.replace('**', '')
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('&nbsp;', ' ')
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = re.sub(r'\$\$([\s\S]*?)\$\$', r'\1', text)
+        text = re.sub(r'\$([^$\n]+?)\$', r'\1', text)
+        text = re.sub(r'\\\[([\s\S]*?)\\\]', r'\1', text)
+        text = re.sub(r'\\\(([\s\S]*?)\\\)', r'\1', text)
+        text = re.sub(r'\\[a-zA-Z]+\{([^{}]*)\}', r'\1', text)
+        text = re.sub(r'\\[a-zA-Z]+', '', text)
+        text = re.sub(r'[\{\}]', '', text)
         return text
 
     def _lighten_color(self, color: RGBColor, factor=0.85) -> RGBColor:
@@ -805,10 +844,7 @@ class PPTService:
         self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1), title, font_size=36, bold=True, color=color)
 
         lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
-        for i, line in enumerate(lines[:8]):
-            y = Inches(1.8 + i * 0.65)
-            self._add_circle(slide, Inches(1.2), y + Inches(0.05), Inches(0.25), color)
-            self._add_text(slide, Inches(1.7), y, Inches(10), Inches(0.6), line, font_size=22, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(1.7), Inches(1.8), Inches(10), Inches(5.0), lines[:6], font_size=20, color=RGBColor(51,51,51))
 
     def _build_thankyou_slide(self, slide, title, subtitle, color, icon=""):
         bg = slide.background
@@ -840,70 +876,66 @@ class PPTService:
 
         self._add_shape(slide, Inches(0.5), Inches(0.5), Inches(0.08), Inches(0.9), color)
 
-        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(0.9), title, font_size=32, bold=True, color=color)
+        self._add_text(slide, Inches(0.8), Inches(0.5), Inches(11), Inches(1.0), title, font_size=32, bold=True, color=color)
 
+        content_top = Inches(1.6)
         if subtitle:
-            self._add_text(slide, Inches(0.8), Inches(1.3), Inches(11), Inches(0.5), subtitle, font_size=16, color=RGBColor(128,128,128))
+            self._add_text(slide, Inches(0.8), Inches(1.4), Inches(11), Inches(0.5), subtitle, font_size=16, color=RGBColor(128,128,128))
+            content_top = Inches(2.0)
 
         lines = [l.strip().lstrip('•-* ') for l in content.split('\n') if l.strip()]
 
         if layout == "centered":
-            self._layout_centered(slide, lines, color)
+            self._layout_centered(slide, lines, color, content_top)
         elif layout == "quote":
-            self._layout_quote(slide, lines, title, color)
+            self._layout_quote(slide, lines, title, color, content_top)
         elif layout == "two-column":
-            self._layout_two_column(slide, lines, color)
+            self._layout_two_column(slide, lines, color, content_top)
         elif layout == "cards":
-            self._layout_cards(slide, lines, color)
+            self._layout_cards(slide, lines, color, content_top)
         elif layout == "timeline":
-            self._layout_timeline(slide, lines, color)
+            self._layout_timeline(slide, lines, color, content_top)
         else:
-            self._layout_left(slide, lines, color)
+            self._layout_left(slide, lines, color, content_top)
 
-    def _layout_left(self, slide, lines, color):
-        for i, line in enumerate(lines[:8]):
-            y = Inches(2.0 + i * 0.6)
-            self._add_circle(slide, Inches(1.0), y + Inches(0.08), Inches(0.2), color)
-            self._add_text(slide, Inches(1.4), y, Inches(10.5), Inches(0.55), line, font_size=20, color=RGBColor(51,51,51))
+    def _layout_left(self, slide, lines, color, top_start):
+        max_lines = 6
+        self._add_bullet_text(slide, Inches(1.4), top_start, Inches(10.5), Inches(5.0), lines[:max_lines], font_size=18, color=RGBColor(51,51,51))
 
-    def _layout_centered(self, slide, lines, color):
-        for i, line in enumerate(lines[:6]):
-            y = Inches(2.2 + i * 0.7)
-            self._add_text(slide, Inches(2), y, Inches(9.333), Inches(0.6), line, font_size=22, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+    def _layout_centered(self, slide, lines, color, top_start):
+        max_lines = 5
+        self._add_bullet_text(slide, Inches(2), top_start + Inches(0.2), Inches(9.333), Inches(5.0), lines[:max_lines], font_size=20, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
 
-    def _layout_quote(self, slide, lines, title, color):
+    def _layout_quote(self, slide, lines, title, color, top_start):
         if lines:
             quote_text = lines[0]
-            self._add_text(slide, Inches(2), Inches(1.8), Inches(1), Inches(1.5), "\u201C", font_size=72, bold=True, color=self._lighten_color(color, 0.6))
-            self._add_text(slide, Inches(2.5), Inches(2.5), Inches(8.5), Inches(2.5), quote_text, font_size=26, bold=True, color=RGBColor(51,51,51))
-            self._add_text(slide, Inches(2.5), Inches(5.2), Inches(8.5), Inches(0.6), f"\u2014 {title}", font_size=18, color=RGBColor(128,128,128))
+            self._add_text(slide, Inches(2), top_start, Inches(1), Inches(1.5), "\u201C", font_size=72, bold=True, color=self._lighten_color(color, 0.6))
+            self._add_text(slide, Inches(2.5), top_start + Inches(0.7), Inches(8.5), Inches(3.0), quote_text, font_size=24, bold=True, color=RGBColor(51,51,51))
+            self._add_text(slide, Inches(2.5), top_start + Inches(3.8), Inches(8.5), Inches(0.6), f"\u2014 {title}", font_size=18, color=RGBColor(128,128,128))
 
-    def _layout_two_column(self, slide, lines, color):
+    def _layout_two_column(self, slide, lines, color, top_start):
         mid = (len(lines) + 1) // 2
         left_lines = lines[:mid]
         right_lines = lines[mid:]
 
-        self._add_rounded_rect(slide, Inches(0.6), Inches(2.0), Inches(5.8), Inches(4.8), RGBColor(248,249,250), color)
-        self._add_rounded_rect(slide, Inches(6.9), Inches(2.0), Inches(5.8), Inches(4.8), RGBColor(248,249,250), color)
+        col_height = Inches(4.5)
+        self._add_rounded_rect(slide, Inches(0.6), top_start, Inches(5.8), col_height, RGBColor(248,249,250), color)
+        self._add_rounded_rect(slide, Inches(6.9), top_start, Inches(5.8), col_height, RGBColor(248,249,250), color)
 
-        for i, line in enumerate(left_lines[:6]):
-            y = Inches(2.3 + i * 0.6)
-            self._add_text(slide, Inches(1.0), y, Inches(5.0), Inches(0.55), f"\u2022 {line}", font_size=18, color=RGBColor(51,51,51))
+        max_lines = 5
+        self._add_bullet_text(slide, Inches(1.0), top_start + Inches(0.3), Inches(5.0), Inches(3.8), left_lines[:max_lines], font_size=16, color=RGBColor(51,51,51))
+        self._add_bullet_text(slide, Inches(7.3), top_start + Inches(0.3), Inches(5.0), Inches(3.8), right_lines[:max_lines], font_size=16, color=RGBColor(51,51,51))
 
-        for i, line in enumerate(right_lines[:6]):
-            y = Inches(2.3 + i * 0.6)
-            self._add_text(slide, Inches(7.3), y, Inches(5.0), Inches(0.55), f"\u2022 {line}", font_size=18, color=RGBColor(51,51,51))
-
-    def _layout_cards(self, slide, lines, color):
+    def _layout_cards(self, slide, lines, color, top_start):
         card_lines = lines[:4]
         card_width = Inches(2.8)
-        card_height = Inches(3.5)
+        card_height = Inches(4.0)
         start_x = Inches(0.6)
         gap = Inches(0.3)
 
         for i, line in enumerate(card_lines):
             x = start_x + i * (card_width + gap)
-            y = Inches(2.2)
+            y = top_start + Inches(0.2)
 
             self._add_rounded_rect(slide, x, y, card_width, card_height, RGBColor(248,249,250), color)
 
@@ -915,10 +947,10 @@ class PPTService:
             circle_tf.paragraphs[0].font.color.rgb = RGBColor(255,255,255)
             circle_tf.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-            self._add_text(slide, x + Inches(0.2), y + Inches(1.1), card_width - Inches(0.4), Inches(2.2), line, font_size=16, color=RGBColor(51,51,51))
+            self._add_text(slide, x + Inches(0.2), y + Inches(1.1), card_width - Inches(0.4), Inches(2.6), line, font_size=14, color=RGBColor(51,51,51))
 
-    def _layout_timeline(self, slide, lines, color):
-        line_y = Inches(4.0)
+    def _layout_timeline(self, slide, lines, color, top_start):
+        line_y = top_start + Inches(2.2)
         self._add_shape(slide, Inches(1.5), line_y, Inches(10.333), Inches(0.06), self._lighten_color(color, 0.6))
 
         item_count = min(len(lines), 5)
@@ -930,10 +962,10 @@ class PPTService:
 
             self._add_circle(slide, dot_x, line_y - Inches(0.12), Inches(0.3), color)
 
-            self._add_text(slide, x, Inches(2.5), spacing, Inches(0.5), str(i + 1), font_size=28, bold=True, alignment=PP_ALIGN.CENTER, color=color)
+            self._add_text(slide, x, top_start + Inches(0.5), spacing, Inches(0.5), str(i + 1), font_size=28, bold=True, alignment=PP_ALIGN.CENTER, color=color)
 
             text_x = x - Inches(0.2)
             text_width = spacing + Inches(0.4)
-            self._add_text(slide, text_x, Inches(4.5), text_width, Inches(2.0), line, font_size=15, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
+            self._add_text(slide, text_x, line_y + Inches(0.4), text_width, Inches(2.0), line, font_size=14, alignment=PP_ALIGN.CENTER, color=RGBColor(51,51,51))
 
 ppt_service = PPTService()

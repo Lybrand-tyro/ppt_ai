@@ -1226,6 +1226,7 @@
                         <div style="flex:1; min-width:0;">
                             <div style="font-weight:bold; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.model_name}</div>
                             <div style="color:#888; font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.api_endpoint}</div>
+                            <div style="color:#666; font-size:0.85em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:monospace;">${item.api_key || item.api_key_masked || ''}</div>
                         </div>
                         <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
                             ${item.is_local ? '<span style="color:#e67e22; font-size:0.85em;">本地</span>' : ''}
@@ -1249,12 +1250,13 @@
                     const data = await response.json();
                     const config = data.config;
                     document.getElementById('apiEndpoint').value = config.api_endpoint;
+                    document.getElementById('apiKey').value = config.api_key || '';
                     document.getElementById('modelName').value = config.model_name;
                     document.getElementById('isLocal').checked = config.is_local;
                     llmConfigured = true;
                     document.getElementById('llmStatus').innerHTML = '<span class="status-indicator connected"></span><span>LLM已配置</span>';
                     document.getElementById('llmDot').className = 'nav-status-dot on';
-                    localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: config.api_endpoint, api_key: '', model_name: config.model_name, is_local: config.is_local }));
+                    localStorage.setItem('llmConfig', JSON.stringify({ api_endpoint: config.api_endpoint, api_key: config.api_key || '', model_name: config.model_name, is_local: config.is_local }));
                     alert('已应用历史配置: ' + config.model_name);
                 } else { alert('应用历史配置失败'); }
             } catch (e) { alert('应用失败: ' + e.message); }
@@ -1282,8 +1284,8 @@
                     const pName = providerNames[item.provider] || item.provider;
                     div.innerHTML = `
                         <div style="flex:1; min-width:0;">
-                            <span style="font-weight:bold; color:#333;">${pName}</span>
-                            <span style="color:#888; margin-left:6px;">${item.api_key_masked || ''}</span>
+                            <div><span style="font-weight:bold; color:#333;">${pName}</span></div>
+                            <div style="color:#666; font-size:0.85em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:monospace;">${item.api_key || item.api_key_masked || ''}</div>
                         </div>
                         <div style="flex-shrink:0; margin-left:8px; display:flex; align-items:center; gap:6px;">
                             <span style="color:#aaa; font-size:0.85em;">${item.saved_at || ''}</span>

@@ -224,6 +224,7 @@ async def get_llm_history(request: Request):
     for item in history:
         safe_history.append({
             "api_endpoint": item.get("api_endpoint", ""),
+            "api_key": item.get("api_key", ""),
             "api_key_masked": item.get("api_key_masked", ""),
             "model_name": item.get("model_name", ""),
             "is_local": item.get("is_local", False),
@@ -252,6 +253,7 @@ async def apply_llm_history(request: Request, data: dict = Body(...)):
             "message": "历史配置已应用",
             "config": {
                 "api_endpoint": entry["api_endpoint"],
+                "api_key": entry.get("api_key", ""),
                 "api_key_masked": entry.get("api_key_masked", ""),
                 "model_name": entry["model_name"],
                 "is_local": entry.get("is_local", False)
@@ -312,6 +314,7 @@ async def get_web_search_history(request: Request):
     for item in history:
         safe_history.append({
             "provider": item.get("provider", ""),
+            "api_key": item.get("api_key", ""),
             "api_key_masked": item.get("api_key_masked", ""),
             "cx": item.get("cx", ""),
             "saved_at": item.get("saved_at", "")
@@ -340,6 +343,7 @@ async def apply_web_search_history(request: Request, data: dict = Body(...)):
             "message": f"{web_search_service.get_active_provider_name()}历史配置已应用",
             "config": {
                 "provider": provider,
+                "api_key": api_key,
                 "api_key_masked": entry.get("api_key_masked", ""),
                 "cx": cx
             }
